@@ -1,0 +1,310 @@
+"""
+Word Page Exporter Pro - Web Application (Flask)
+Browser interface for the high-fidelity page range export engine.
+
+Run with:
+    python run_web.py
+"""
+
+import io
+import os
+import tempfile
+import uuid
+import zipfile
+
+from flask import Flask, jsonify, make_response, render_template, request, send_file
+
+from word_exporter_pro.core.com_engine import DocumentInspector
+from word_exporter_pro.core.pdf_engine import PdfInspector
+from word_exporter_pro.core.preview import ensure_preview_async, render_page_preview
+from word_exporter_pro.core.batch_processor import ExportJobConfig
+from word_exporter_pro.core.naming_formatter import NamingFormatter
+from word_exporter_pro.web.job_manager import JobManager
+from word_exporter_pro.utils.logger import get_logger
+
+logger = get_logger()
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "word_exporter_pro_web", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {".docx", ".doc", ".docm", ".dotx", ".dotm", ".rtf", ".pdf"}
+ALLOWED_FORMATS = ["docx", "pdf", "doc", "rtf", "docm"]
+DEFAULT_OUTPUT_DIR = os.path.join(
+    os.path.expanduser("~"), "Documents", "WordPDF_Exports"
+)
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
+job_manager = JobManager()
+application = app
+
+
+def _is_allowed(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _store_upload(file_storage) -> dict:
+    """Stores an uploaded file under its original name in a unique subfolder."""
+    safe_name = os.path.basename(file_storage.filename)
+    subdir = os.path.join(UPLOAD_DIR, uuid.uuid4().hex[:8])
+    os.makedirs(subdir, exist_ok=True)
+    dest = os.path.join(subdir, safe_name)
+    file_storage.save(dest)
+    return {"name": safe_name, "size": os.path.getsize(dest)}
+
+
+def _resolve_upload(name: str) -> str:
+    """Resolves an uploaded filename to its stored path (newest wins on duplicates)."""
+    name = os.path.basename(name)
+    direct = os.path.join(UPLOAD_DIR, name)
+    if os.path.isfile(direct):
+        return direct
+    best, best_mtime = None, 0.0
+    for entry in os.listdir(UPLOAD_DIR):
+        sub = os.path.join(UPLOAD_DIR, entry)
+        if os.path.isdir(sub):
+            candidate = os.path.join(sub, name)
+            if os.path.isfile(candidate):
+                mtime = os.path.getmtime(candidate)
+                if mtime >= best_mtime:
+                    best, best_mtime = candidate, mtime
+    if best:
+        return best
+    raise FileNotFoundError(name)
+
+
+@app.route("/")
+def index():
+    return render_template("index.html", default_output_dir=DEFAULT_OUTPUT_DIR)
+
+
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "No files provided."}), 400
+
+    saved = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        if not _is_allowed(f.filename):
+            return jsonify({
+                "error": f"Unsupported file type: {f.filename}. "
+                         f"Allowed: {sorted(e.lstrip('.') for e in ALLOWED_EXTENSIONS)}"
+            }), 400
+        saved.append(_store_upload(f))
+
+    return jsonify({"files": saved})
+
+
+@app.route("/api/inspect", methods=["POST"])
+def api_inspect():
+    data = request.get_json(silent=True) or {}
+    name = os.path.basename(str(data.get("name", "")))
+    try:
+        path = _resolve_upload(name)
+    except FileNotFoundError:
+        return jsonify({"error": f"Uploaded file not found: {name}"}), 404
+    try:
+        if os.path.splitext(path)[1].lower() == ".pdf":
+            info = PdfInspector.get_info(path)
+        else:
+            info = DocumentInspector.get_info(path)
+    except Exception as e:
+        logger.error(f"Inspect failed via web: {e}")
+        return jsonify({"error": str(e)}), 500
+    return jsonify(info)
+
+
+@app.route("/api/naming-preview", methods=["POST"])
+def api_naming_preview():
+    data = request.get_json(silent=True) or {}
+    pattern = str(data.get("pattern", "")).strip() or NamingFormatter.DEFAULT_PATTERN
+    fmt = str(data.get("format", "docx")).strip() or "docx"
+    sample = str(data.get("sample", "SampleReport.docx")) or "SampleReport.docx"
+    try:
+        name = NamingFormatter.generate_filename(
+            pattern=pattern,
+            original_filepath=sample,
+            page_range=(1, 3),
+            total_pages=10,
+            output_ext=fmt,
+            batch_index=1,
+        )
+        return jsonify({"preview": name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+def _preview_response(path: str):
+    """Renders one page of a document and returns an image/png response."""
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        page = 1
+    try:
+        width = max(300, min(2400, int(request.args.get("w", 1000))))
+    except ValueError:
+        width = 1000
+    try:
+        data, total = render_page_preview(path, page=page, max_width=width)
+    except Exception as e:
+        logger.error(f"Preview failed via web: {e}")
+        return jsonify({"error": str(e)}), 500
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "image/png"
+    resp.headers["X-Total-Pages"] = str(total)
+    return resp
+
+
+@app.route("/api/preview/<path:name>")
+def api_preview(name):
+    try:
+        path = _resolve_upload(name)
+    except FileNotFoundError:
+        return jsonify({"error": "Uploaded file not found."}), 404
+
+    # Word files need a preview PDF first; generate it in the background
+    # and let the client poll until it is ready.
+    if not path.lower().endswith(".pdf") and not ensure_preview_async(path):
+        return jsonify({"status": "generating"}), 202
+    return _preview_response(path)
+
+
+@app.route("/api/output-preview/<job_id>/<path:filename>")
+def api_output_preview(job_id, filename):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    filepath = os.path.abspath(os.path.join(job.output_dir, filename))
+    if not os.path.isfile(filepath):
+        return jsonify({"error": f"Output file not found: {filename}"}), 404
+    return _preview_response(filepath)
+
+
+@app.route("/api/export", methods=["POST"])
+def api_export():
+    data = request.get_json(silent=True) or {}
+    names = data.get("files", [])
+    if not names:
+        return jsonify({"error": "No files selected for export."}), 400
+
+    paths = []
+    for n in names:
+        try:
+            paths.append(_resolve_upload(str(n)))
+        except FileNotFoundError:
+            continue
+    if not paths:
+        return jsonify({"error": "None of the selected files exist on the server."}), 400
+
+    export_format = str(data.get("format", "docx")).lower()
+    if export_format not in ALLOWED_FORMATS:
+        return jsonify({"error": f"Unsupported export format '{export_format}'."}), 400
+
+    engine_mode = str(data.get("engine_mode", "trimming"))
+    if engine_mode not in ("trimming", "selection"):
+        engine_mode = "trimming"
+
+    output_dir = str(data.get("output_dir", "")).strip() or DEFAULT_OUTPUT_DIR
+    output_dir = os.path.abspath(output_dir)
+
+    naming_pattern = str(data.get("naming_pattern", "")).strip() or NamingFormatter.DEFAULT_PATTERN
+
+    config = ExportJobConfig(
+        source_files=paths,
+        range_expression=str(data.get("range", "1-end")),
+        output_dir=output_dir,
+        export_format=export_format,
+        naming_pattern=naming_pattern,
+        overwrite=bool(data.get("overwrite", False)),
+        engine_mode=engine_mode,
+        visible=bool(data.get("visible", False)),
+    )
+
+    job = job_manager.create(config)
+    job_manager.start(job)
+    logger.info(f"Web export job started: {job.job_id} ({len(paths)} file(s))")
+    return jsonify({"job_id": job.job_id}), 202
+
+
+@app.route("/api/job/<job_id>")
+def api_job(job_id):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    return jsonify(job.snapshot())
+
+
+@app.route("/api/job/<job_id>/cancel", methods=["POST"])
+def api_job_cancel(job_id):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    job_manager.cancel(job)
+    return jsonify({"job_id": job_id, "status": "cancelling"})
+
+
+@app.route("/api/download/<job_id>/<path:filename>")
+def api_download(job_id, filename):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    filepath = os.path.abspath(os.path.join(job.output_dir, filename))
+    if not os.path.isfile(filepath):
+        return jsonify({"error": f"Output file not found: {filename}"}), 404
+    return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
+
+
+@app.route("/api/download/<job_id>/zip")
+def api_download_zip(job_id):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    with job._lock:
+        outputs = list(job.outputs)
+    if not outputs:
+        return jsonify({"error": "No output files for this job."}), 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in outputs:
+            filepath = os.path.abspath(os.path.join(job.output_dir, name))
+            if os.path.isfile(filepath):
+                zf.write(filepath, arcname=name)
+    buf.seek(0)
+
+    zip_name = f"word_pdf_exports_{job.job_id}.zip"
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name=zip_name,
+        mimetype="application/zip",
+    )
+
+
+def main(host: str | None = None, port: int | None = None, debug: bool | None = None):
+    host = host or os.getenv("HOST", "0.0.0.0")
+    port = int(port or os.getenv("PORT", "8000"))
+    debug = debug if debug is not None else os.getenv("DEBUG", "False").lower() in {"1", "true", "yes", "on"}
+
+    print("=" * 60)
+    print(" Microsoft Word & PDF Page Exporter Pro - Web Interface")
+    print("=" * 60)
+    print(f" Local:   http://127.0.0.1:{port}")
+    try:
+        import socket
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip and not ip.startswith("127."):
+                print(f" Network: http://{ip}:{port}  (open from other devices)")
+    except Exception:
+        pass
+    print(" Press Ctrl+C to stop the server.")
+    print("=" * 60)
+    app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+pywin32>=306
+customtkinter>=6.0.0
+pillow>=10.0.0
+pytest>=8.0.0
+flask>=3.0.0
+pymupdf>=1.24.0
+gunicorn>=23.0.0

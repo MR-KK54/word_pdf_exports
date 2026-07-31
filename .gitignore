@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & Caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary files & MS Word temporary lock files
+~$*.docx
+~$*.doc
+~$*.docm
+~$*.dotx
+~$*.dotm
+*.tmp
+*.log
+
+# Output & Upload directories
+exported_pages/
+scratch/
+uploads/
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
