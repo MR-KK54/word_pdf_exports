@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: word-pdf-exports
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn run_web:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
