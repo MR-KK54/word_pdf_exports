@@ -253,10 +253,48 @@ class PageExporterEngine:
         end_page: int,
         export_format: str
     ) -> str:
-        """Non-Windows / Linux cloud server fallback engine."""
-        shutil.copy2(abs_source, abs_output)
-        logger.success(f"Exported pages [{start_page}-{end_page}] (Server mode) to '{abs_output}'")
-        return abs_output
+        """Non-Windows / Linux cloud server fallback engine using python-docx to trim pages."""
+        if docx is None:
+            shutil.copy2(abs_source, abs_output)
+            return abs_output
+
+        try:
+            doc = docx.Document(abs_source)
+            body = doc._body._element
+
+            current_page = 1
+            elements_to_remove = []
+
+            for child in list(body):
+                tag = child.tag.rsplit('}', 1)[-1]
+                if tag not in ('p', 'tbl'):
+                    continue
+
+                xml = child.xml
+                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or ('w:br' in xml and 'page' in xml))
+
+                element_page = current_page
+
+                if has_break:
+                    current_page += 1
+
+                if element_page < start_page or element_page > end_page:
+                    elements_to_remove.append(child)
+
+            if elements_to_remove:
+                for el in elements_to_remove:
+                    try:
+                        body.remove(el)
+                    except Exception:
+                        pass
+
+            doc.save(abs_output)
+            logger.success(f"Trimmed pages [{start_page}-{end_page}] (Server mode) to '{abs_output}'")
+            return abs_output
+        except Exception as e:
+            logger.warning(f"python-docx fallback trimming warning: {e}. Copying original file.")
+            shutil.copy2(abs_source, abs_output)
+            return abs_output
 
     @staticmethod
     def _export_by_trimming(
@@ -287,22 +325,23 @@ class PageExporterEngine:
                 try:
                     total_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
                     
-                    if start_page < 1 or end_page > total_pages or start_page > end_page:
-                        raise ValueError(f"Invalid range [{start_page}-{end_page}] for document with {total_pages} pages.")
+                    start_page = max(1, min(start_page, total_pages))
+                    end_page = max(start_page, min(end_page, total_pages))
 
-                    # Capture character positions before trimming
-                    start_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=start_page).Start
-                    end_after_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=end_page + 1).Start
-
-                    # 1. If end_page < total_pages, delete content from start of (end_page + 1) to document end
-                    if end_page < total_pages:
-                        cut_range = doc.Range(Start=end_after_pos, End=doc.Content.End)
-                        PageExporterEngine._delete_range(word_app, cut_range)
-
-                    # 2. If start_page > 1, delete content from document start to start of page start_page
+                    # 1. If start_page > 1, delete content from document start to start of page start_page
                     if start_page > 1:
+                        start_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=start_page).Start
                         cut_range_before = doc.Range(Start=doc.Content.Start, End=start_pos)
                         PageExporterEngine._delete_range(word_app, cut_range_before)
+
+                    # 2. After trimming front, calculate kept length: num_pages_to_keep = end_page - start_page + 1
+                    current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+                    num_pages_to_keep = end_page - start_page + 1
+
+                    if num_pages_to_keep < current_pages:
+                        end_after_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=num_pages_to_keep + 1).Start
+                        cut_range_after = doc.Range(Start=end_after_pos, End=doc.Content.End)
+                        PageExporterEngine._delete_range(word_app, cut_range_after)
 
                     # 3. Clean up any trailing manual page breaks at the end of trimmed range
                     try:
