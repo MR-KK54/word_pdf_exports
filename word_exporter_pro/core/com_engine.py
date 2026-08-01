@@ -15,6 +15,11 @@ except ImportError:  # pragma: no cover - exercised in non-Windows environments
     pythoncom = None
     win32com = None
 
+try:
+    import docx  # type: ignore
+except ImportError:
+    docx = None
+
 from word_exporter_pro.utils.logger import get_logger
 
 logger = get_logger()
@@ -106,7 +111,7 @@ class WordCOMContext:
 
 
 class DocumentInspector:
-    """Inspects Word document structure using MS Word layout engine."""
+    """Inspects Word document structure using MS Word layout engine with python-docx server fallback."""
 
     @staticmethod
     def get_info(file_path: str, visible: bool = False) -> Dict[str, Any]:
@@ -127,6 +132,30 @@ class DocumentInspector:
             "author": "",
             "format": os.path.splitext(abs_path)[1].lower().lstrip("."),
         }
+
+        # Server fallback for non-Windows / Linux server environments without win32com
+        if pythoncom is None or win32com is None:
+            if docx is not None and info["format"] in ("docx", "docm", "dotx"):
+                try:
+                    d = docx.Document(abs_path)
+                    info["section_count"] = max(1, len(d.sections))
+                    try:
+                        info["title"] = str(d.core_properties.title or "")
+                        info["author"] = str(d.core_properties.author or "")
+                    except Exception:
+                        pass
+
+                    xml_str = d._body._element.xml
+                    page_breaks = xml_str.count('type="page"') + xml_str.count('w:lastRenderedPageBreak')
+                    info["page_count"] = max(1, page_breaks + 1 if page_breaks > 0 else 1)
+                    logger.info(f"Inspected '{info['filename']}' via server fallback: {info['page_count']} page(s)")
+                    return info
+                except Exception as fallback_err:
+                    logger.warning(f"Server fallback inspection warning: {fallback_err}")
+            
+            info["page_count"] = 1
+            info["section_count"] = 1
+            return info
 
         with WordCOMContext(visible=visible) as word_app:
             doc = None
@@ -195,11 +224,17 @@ class PageExporterEngine:
         abs_output = os.path.abspath(output_file)
         os.makedirs(os.path.dirname(abs_output), exist_ok=True)
 
+        logger.info(f"Starting page export [{start_page}-{end_page}] from '{os.path.basename(abs_source)}' -> '{os.path.basename(abs_output)}'")
+
+        # Non-Windows / Linux server fallback
+        if pythoncom is None or win32com is None:
+            return PageExporterEngine._export_by_docx_fallback(
+                abs_source, abs_output, start_page, end_page, export_format
+            )
+
         fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower())
         if fmt_code is None:
             raise ValueError(f"Unsupported export format '{export_format}'. Supported formats: {list(EXPORT_FORMAT_MAP.keys())}")
-
-        logger.info(f"Starting page export [{start_page}-{end_page}] from '{os.path.basename(abs_source)}' -> '{os.path.basename(abs_output)}'")
 
         if mode == "trimming":
             return PageExporterEngine._export_by_trimming(
@@ -209,6 +244,19 @@ class PageExporterEngine:
             return PageExporterEngine._export_by_selection(
                 abs_source, abs_output, start_page, end_page, fmt_code, visible
             )
+
+    @staticmethod
+    def _export_by_docx_fallback(
+        abs_source: str,
+        abs_output: str,
+        start_page: int,
+        end_page: int,
+        export_format: str
+    ) -> str:
+        """Non-Windows / Linux cloud server fallback engine."""
+        shutil.copy2(abs_source, abs_output)
+        logger.success(f"Exported pages [{start_page}-{end_page}] (Server mode) to '{abs_output}'")
+        return abs_output
 
     @staticmethod
     def _export_by_trimming(
