@@ -37,34 +37,44 @@ class PageRangeParser:
         if not cleaned:
             raise RangeParseError("Page range input cannot be empty.")
 
-        # Preset keywords
-        if cleaned == "all" or cleaned == "1-end":
-            return [(1, total_pages)]
-        
-        if cleaned == "all-individual":
+        # Keyword Aliases for document splitting
+        individual_keywords = {
+            "all-individual", "all_individual", "all individual",
+            "individual", "split", "each", "every", "all-pages", "all_pages"
+        }
+        if cleaned in individual_keywords:
             return [(p, p) for p in range(1, total_pages + 1)]
 
-        if cleaned == "even":
+        full_doc_keywords = {"all", "1-end", "full", "1 to end"}
+        if cleaned in full_doc_keywords:
+            return [(1, total_pages)]
+
+        if cleaned in {"even", "evens"}:
             evens = [p for p in range(1, total_pages + 1) if p % 2 == 0]
             if not evens:
                 raise RangeParseError(f"Document has {total_pages} page(s), no even pages found.")
             return [(p, p) for p in evens]
 
-        if cleaned == "odd":
+        if cleaned in {"odd", "odds"}:
             odds = [p for p in range(1, total_pages + 1) if p % 2 != 0]
             return [(p, p) for p in odds]
 
-        # Comma-separated parts
-        parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+        # Normalize separators: replace semicolons and spaces with commas, and range connectors with hyphens
+        normalized = cleaned.replace(";", ",")
+        # Replace range connectors " to ", " through ", ":" with "-"
+        normalized = re.sub(r"\s+(?:to|through)\s+", "-", normalized)
+        normalized = normalized.replace(":", "-")
+
+        parts = [p.strip() for p in normalized.split(",") if p.strip()]
         result_ranges: List[Tuple[int, int]] = []
 
         for part in parts:
             if "-" in part:
-                tokens = part.split("-")
+                tokens = [t.strip() for t in part.split("-") if t.strip()]
                 if len(tokens) != 2:
                     raise RangeParseError(f"Invalid range segment '{part}'. Expected format 'X-Y'.")
                 
-                raw_start, raw_end = tokens[0].strip(), tokens[1].strip()
+                raw_start, raw_end = tokens[0], tokens[1]
 
                 # Start page
                 try:
@@ -73,7 +83,7 @@ class PageRangeParser:
                     raise RangeParseError(f"Invalid start page '{raw_start}' in segment '{part}'.")
 
                 # End page
-                if raw_end == "end":
+                if raw_end in ("end", "last"):
                     end_page = total_pages
                 else:
                     try:
@@ -81,19 +91,15 @@ class PageRangeParser:
                     except ValueError:
                         raise RangeParseError(f"Invalid end page '{raw_end}' in segment '{part}'.")
 
-                # Validation
-                if start_page < 1:
-                    raise RangeParseError(f"Start page {start_page} cannot be less than 1.")
-                if end_page > total_pages:
-                    raise RangeParseError(f"End page {end_page} exceeds document total pages ({total_pages}).")
-                if start_page > end_page:
-                    raise RangeParseError(f"Start page {start_page} is greater than end page {end_page} in range '{part}'.")
+                # Clamp pages safely to [1, total_pages]
+                start_page = max(1, min(start_page, total_pages))
+                end_page = max(start_page, min(end_page, total_pages))
 
                 result_ranges.append((start_page, end_page))
 
             else:
-                # Single page number
-                if part == "end":
+                # Single page number or keyword
+                if part in ("end", "last"):
                     page_num = total_pages
                 else:
                     try:
@@ -101,9 +107,7 @@ class PageRangeParser:
                     except ValueError:
                         raise RangeParseError(f"Invalid page number or identifier '{part}'.")
 
-                if page_num < 1 or page_num > total_pages:
-                    raise RangeParseError(f"Page number {page_num} is out of valid bounds (1-{total_pages}).")
-
+                page_num = max(1, min(page_num, total_pages))
                 result_ranges.append((page_num, page_num))
 
         return result_ranges
