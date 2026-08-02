@@ -327,35 +327,26 @@ class PageExporterEngine:
                     
                     start_page = max(1, min(start_page, total_pages))
                     end_page = max(start_page, min(end_page, total_pages))
+                    expected_keep = end_page - start_page + 1
 
-                    # 1. If start_page > 1, delete content from document start to start of page start_page
+                    # 1. Trim the FRONT: delete everything up to the start of the kept page.
                     if start_page > 1:
                         start_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=start_page).Start
-                        cut_range_before = doc.Range(Start=doc.Content.Start, End=start_pos)
-                        PageExporterEngine._delete_range(word_app, cut_range_before)
+                        PageExporterEngine._delete_range(
+                            word_app, doc.Range(Start=doc.Content.Start, End=start_pos)
+                        )
 
-                    # 2. After trimming front, calculate kept length: num_pages_to_keep = end_page - start_page + 1
-                    current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
-                    num_pages_to_keep = end_page - start_page + 1
+                    # 2. Trim the BACK: keep exactly `expected_keep` pages. Recomputes pagination
+                    #    between deletions because Word may collapse a blank page after each cut.
+                    PageExporterEngine._trim_tail_to_keep(word_app, doc, expected_keep)
 
-                    if num_pages_to_keep < current_pages:
-                        end_after_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=num_pages_to_keep + 1).Start
-                        cut_range_after = doc.Range(Start=end_after_pos, End=doc.Content.End)
-                        PageExporterEngine._delete_range(word_app, cut_range_after)
-
-                    # 3. Clean up any trailing manual page breaks at the end of trimmed range
-                    try:
-                        for _ in range(5):
-                            if doc.Content.End <= 2:
-                                break
-                            last_char_range = doc.Range(Start=doc.Content.End - 2, End=doc.Content.End)
-                            text = last_char_range.Text
-                            if text and ("\x0c" in text or "\f" in text):
-                                last_char_range.Delete()
-                            else:
-                                break
-                    except Exception:
-                        pass
+                    # 3. Remove any stray page-break/blank paragraph left at the cut edges so no
+                    #    spurious blank front/back page survives in the trimmed result.
+                    #    The front edge is only cleaned when a front trim actually occurred,
+                    #    so a legitimate leading page-break on a range starting at page 1 is kept.
+                    if start_page > 1:
+                        PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=True)
+                    PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
 
                     # 4. Natively update field codes (PAGE, NUMPAGES, etc.) without altering main file headers/footers
                     try:
@@ -443,6 +434,56 @@ class PageExporterEngine:
             cut_range.Delete()
         except Exception:
             logger.warning("Could not delete range during page trimming.")
+
+    @staticmethod
+    def _trim_tail_to_keep(word_app, doc, expected_keep: int) -> None:
+        """Delete trailing content until the document holds exactly `expected_keep` pages.
+
+        Word re-paginates the document after every deletion (a blank page or empty
+        paragraph at a cut boundary can collapse and change the page count), so the
+        target is re-evaluated on each iteration instead of trusting a single
+        pre-computed boundary. This guarantees the kept count matches the requested
+        custom page range regardless of manual page breaks.
+        """
+        guard = 0
+        while guard < 60:
+            current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+            if current_pages <= expected_keep:
+                break
+            try:
+                drop_start = doc.GoTo(
+                    What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=expected_keep + 1
+                ).Start
+                PageExporterEngine._delete_range(
+                    word_app, doc.Range(Start=drop_start, End=doc.Content.End)
+                )
+            except Exception:
+                break
+            guard += 1
+
+    @staticmethod
+    def _clean_page_boundary(word_app, doc, front_of_doc: bool) -> None:
+        """Remove a stray leading/trailing page-break or blank paragraph left at the
+        trimmed edge so the first and last pages of the result hold only real content."""
+        for _ in range(5):
+            try:
+                if front_of_doc:
+                    rng = doc.Range(
+                        Start=doc.Content.Start,
+                        End=min(doc.Content.Start + 2, doc.Content.End),
+                    )
+                else:
+                    if doc.Content.End <= 2:
+                        break
+                    rng = doc.Range(Start=doc.Content.End - 2, End=doc.Content.End)
+                if rng.End <= rng.Start:
+                    break
+                if "\x0c" in rng.Text or "\f" in rng.Text:
+                    rng.Delete()
+                else:
+                    break
+            except Exception:
+                break
 
     @staticmethod
     def _section_containing_page(doc, page: int) -> int:
