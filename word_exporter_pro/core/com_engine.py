@@ -348,27 +348,11 @@ class PageExporterEngine:
                         PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=True)
                     PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
 
-                    # 4. Natively update field codes (PAGE, NUMPAGES, etc.) without altering main file headers/footers
-                    try:
-                        doc.Fields.Update()
-                    except Exception:
-                        pass
-
-                    try:
-                        for sec in doc.Sections:
-                            for hf_coll in (sec.Headers, sec.Footers):
-                                for hf_idx in (1, 2, 3):
-                                    try:
-                                        hf_coll(hf_idx).Range.Fields.Update()
-                                    except Exception:
-                                        pass
-                    except Exception:
-                        pass
-
-                    # 5. When trimming removes content AFTER the range, the trailing section break is
-                    #    deleted too, so the kept last section inherits the NEXT source section's
-                    #    header/footer and page setup. Re-sync it against the original source doc.
-                    if end_page < total_pages:
+                    # 4. When trimming removes content BEFORE/AFTER the range, the boundary section breaks
+                    #    are deleted too, so the kept sections may inherit an adjacent (wrong) section's
+                    #    header/footer, page setup, and page-number scheme. Re-sync them against the
+                    #    original source document so the exported range looks correct.
+                    if end_page < total_pages or start_page > 1:
                         try:
                             source_doc = word_app.Documents.Open(
                                 FileName=abs_source,
@@ -388,6 +372,32 @@ class PageExporterEngine:
                             )
                         except Exception as restore_err:
                             logger.warning(f"Could not restore headers/footers for trimmed range: {restore_err}")
+
+                    # 5. Restart page numbering from 1 on the trimmed document so PAGE/NUMPAGES
+                    #    fields show the range-relative numbers (e.g. "2 of 3") instead of the
+                    #    source document's original page numbers. This must run AFTER the section
+                    #    restore above, otherwise the earlier StartingNumber overwrites would win.
+                    PageExporterEngine._restart_page_numbering(doc, start_page)
+
+                    # 6. Natively update field codes (PAGE, NUMPAGES, TOC, etc.) across the body
+                    #    and every header/footer so they reflect the final trimmed content.
+                    try:
+                        try:
+                            doc.Fields.Update()
+                        except Exception:
+                            pass
+                        try:
+                            for sec in doc.Sections:
+                                for hf_coll in (sec.Headers, sec.Footers):
+                                    for hf_idx in (1, 2, 3):
+                                        try:
+                                            hf_coll(hf_idx).Range.Fields.Update()
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
 
                     # 6. Save as output destination format
                     doc.SaveAs2(FileName=abs_output, FileFormat=fmt_code)
@@ -484,6 +494,36 @@ class PageExporterEngine:
                     break
             except Exception:
                 break
+
+    @staticmethod
+    def _restart_page_numbering(doc, start_page: int) -> None:
+        """Reset page numbering on the trimmed document so the PAGE/NUMPAGES fields show
+        range-relative numbers instead of the source document's original numbering.
+
+        - First section restarts at 1 (and re-enables restart-at-section), so the kept
+          first page reads as page 1 of the new document.
+        - Subsequent sections continue sequentially (RestartNumberingAtSection=False) so
+          numbering flows across sections without resetting.
+        - Only the page-numbering scheme is touched; explicit header/footer text is left
+          intact so the section restore above is preserved.
+        """
+        try:
+            if not doc.Sections:
+                return
+            first = True
+            for sec in doc.Sections:
+                try:
+                    ps = sec.PageSetup
+                    if first:
+                        ps.PageNumbering.RestartNumberingAtSection = True
+                        ps.PageNumbering.StartingNumber = 1
+                        first = False
+                    else:
+                        ps.PageNumbering.RestartNumberingAtSection = False
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     @staticmethod
     def _section_containing_page(doc, page: int) -> int:
