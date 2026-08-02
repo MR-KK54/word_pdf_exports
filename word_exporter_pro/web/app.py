@@ -220,6 +220,7 @@ def api_export():
         export_format=export_format,
         naming_pattern=naming_pattern,
         overwrite=bool(data.get("overwrite", False)),
+        clear_output_dir=bool(data.get("clear_output_dir", False)),
         engine_mode=engine_mode,
         visible=bool(data.get("visible", False)),
     )
