@@ -89,6 +89,18 @@ function renderFiles() {
 
     const info = document.createElement("div");
     info.className = "file-info";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "file-select-check";
+    checkbox.dataset.name = f.name;
+    checkbox.checked = f.checked !== false;
+    checkbox.style.marginRight = "10px";
+    checkbox.style.cursor = "pointer";
+    checkbox.onchange = () => {
+      f.checked = checkbox.checked;
+    };
+
     const nameEl = document.createElement("span");
     nameEl.className = "file-name";
     nameEl.title = f.name;
@@ -96,7 +108,7 @@ function renderFiles() {
     const meta = document.createElement("span");
     meta.className = "muted";
     meta.textContent = " · " + fmtSize(f.size) + (f.pages != null ? " · " + f.pages + " pages" : "");
-    info.append(nameEl, meta);
+    info.append(checkbox, nameEl, meta);
 
     const actions = document.createElement("div");
     const previewBtn = document.createElement("button");
@@ -311,11 +323,12 @@ async function updatePreview() {
 /* ---------------- Export flow ---------------- */
 
 async function startExport() {
-  if (state.files.length === 0) { alert("Add at least one document first."); return; }
+  const selectedFiles = state.files.filter(f => f.checked !== false).map(f => f.name);
+  if (selectedFiles.length === 0) { alert("Select at least one document to export."); return; }
   if (!$("rangeInput").value.trim()) { alert("Enter a valid page range."); return; }
 
   const body = {
-    files: state.files.map((f) => f.name),
+    files: selectedFiles,
     range: $("rangeInput").value.trim(),
     format: $("formatSelect").value,
     output_dir: $("outputDirInput").value.trim(),
