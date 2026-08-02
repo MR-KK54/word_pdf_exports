@@ -475,7 +475,7 @@ function resetSession() {
   $("formatSelect").value = "docx";
   $("engineSelect").value = "trimming";
   $("overwriteCheck").checked = false;
-  $("clearOutputDirCheck").checked = false;
+  $("clearOutputDirCheck").checked = true;
   $("visibleCheck").checked = false;
   $("outputDirInput").value = defaultOutputDir;
 

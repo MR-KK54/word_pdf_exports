@@ -415,7 +415,6 @@ input[type="text"]:focus, select:focus {
   cursor: zoom-in;
 }
 
-/* Fullscreen preview modal */
 .modal {
   position: fixed;
   inset: 0;
