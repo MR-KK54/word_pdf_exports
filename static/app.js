@@ -321,7 +321,6 @@ async function startExport() {
     output_dir: $("outputDirInput").value.trim(),
     naming_pattern: $("namingInput").value.trim(),
     overwrite: $("overwriteCheck").checked,
-    clear_output_dir: $("clearOutputDirCheck").checked,
     engine_mode: $("engineSelect").value,
     visible: $("visibleCheck").checked,
   };
@@ -475,7 +474,6 @@ function resetSession() {
   $("formatSelect").value = "docx";
   $("engineSelect").value = "trimming";
   $("overwriteCheck").checked = false;
-  $("clearOutputDirCheck").checked = false;
   $("visibleCheck").checked = false;
   $("outputDirInput").value = defaultOutputDir;
 

@@ -243,14 +243,10 @@ class WordExporterApp(ctk.CTk):
         )
         self.preview_val_lbl.grid(row=5, column=1, padx=15, pady=5, sticky="w")
 
-        # Overwrite & Clear options
+        # Overwrite option
         self.overwrite_var = ctk.BooleanVar(value=False)
         overwrite_chk = ctk.CTkCheckBox(output_card, text="Overwrite existing files", variable=self.overwrite_var)
-        overwrite_chk.grid(row=6, column=1, padx=15, pady=5, sticky="w")
-
-        self.clear_output_var = ctk.BooleanVar(value=False)
-        clear_output_chk = ctk.CTkCheckBox(output_card, text="Clear output directory before export", variable=self.clear_output_var)
-        clear_output_chk.grid(row=7, column=1, padx=15, pady=(5, 12), sticky="w")
+        overwrite_chk.grid(row=6, column=1, padx=15, pady=(5, 12), sticky="w")
 
         # 4. Engine & Advanced Settings
         adv_card = ctk.CTkFrame(left_scroll)
@@ -497,7 +493,6 @@ class WordExporterApp(ctk.CTk):
             export_format=self.format_var.get(),
             naming_pattern=self.naming_entry.get().strip(),
             overwrite=self.overwrite_var.get(),
-            clear_output_dir=self.clear_output_var.get(),
             engine_mode=self.engine_var.get(),
             visible=self.visible_var.get()
         )

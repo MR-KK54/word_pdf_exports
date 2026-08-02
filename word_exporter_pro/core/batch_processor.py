@@ -25,7 +25,6 @@ class ExportJobConfig:
     export_format: str = "docx"
     naming_pattern: str = "{original_name}_pages_{start_page}-{end_page}"
     overwrite: bool = False
-    clear_output_dir: bool = False
     engine_mode: str = "trimming"
     visible: bool = False
 
@@ -65,21 +64,6 @@ class BatchProcessor:
         on_file_created: Optional[Callable[[str], None]] = None
     ):
         logger.info(f"Starting batch export job across {len(self.config.source_files)} source document(s)...")
-
-        # Clear output directory if requested
-        if self.config.clear_output_dir and os.path.exists(self.config.output_dir):
-            import shutil
-            logger.info(f"Clearing output directory: {self.config.output_dir}")
-            try:
-                for item in os.listdir(self.config.output_dir):
-                    item_path = os.path.join(self.config.output_dir, item)
-                    if os.path.isfile(item_path):
-                        os.remove(item_path)
-                    elif os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                logger.success("Output directory cleared.")
-            except Exception as e:
-                logger.warning(f"Failed to clear output directory '{self.config.output_dir}': {e}")
 
         total_export_tasks = 0
         job_tasks: List[Tuple[str, int, Tuple[int, int], bool]] = [] # (file_path, total_pages, (start, end), is_pdf)

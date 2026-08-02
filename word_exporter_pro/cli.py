@@ -46,7 +46,6 @@ Examples:
     parser.add_argument("-f", "--format", choices=["docx", "pdf", "doc", "rtf", "docm"], default="docx", help="Export file format. Default: 'docx'")
     parser.add_argument("-n", "--naming", default="{original_name}_pages_{start_page}-{end_page}", help="Output filename template. Placeholders: {original_name}, {range}, {start_page}, {end_page}, {timestamp}")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output files if they already exist")
-    parser.add_argument("--clear-output-dir", action="store_true", help="Clear the output directory before starting the export job")
     parser.add_argument("--mode", choices=["trimming", "selection"], default="trimming", help="Extraction engine mode. Default: 'trimming'")
     parser.add_argument("--inspect", action="store_true", help="Inspect input document statistics and exit")
     parser.add_argument("--visible", action="store_true", help="Run Microsoft Word visibly (useful for debugging)")
@@ -109,7 +108,6 @@ Examples:
         export_format=args.format,
         naming_pattern=args.naming,
         overwrite=args.overwrite,
-        clear_output_dir=args.clear_output_dir,
         engine_mode=args.mode,
         visible=args.visible
     )
