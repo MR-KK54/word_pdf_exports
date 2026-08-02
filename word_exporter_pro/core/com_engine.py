@@ -228,6 +228,11 @@ class PageExporterEngine:
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
+            if export_format.lower() == "pdf":
+                raise RuntimeError(
+                    "PDF export format for Word documents is not supported on this platform. "
+                    "Please install Microsoft Word on Windows, or export as DOCX instead."
+                )
             return PageExporterEngine._export_by_docx_fallback(
                 abs_source, abs_output, start_page, end_page, export_format
             )
