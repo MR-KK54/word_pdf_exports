@@ -84,8 +84,8 @@ class BatchProcessor:
                     info = DocumentInspector.get_info(file_path, visible=self.config.visible)
                 total_pages = info["page_count"]
                 
-                # Parse range expression for this document
-                parsed_ranges = PageRangeParser.parse(self.config.range_expression, total_pages)
+                # Parse range expression for this document (do not clamp to total pages yet for naming)
+                parsed_ranges = PageRangeParser.parse(self.config.range_expression, total_pages, clamp_to_total=False)
                 
                 for pr in parsed_ranges:
                     job_tasks.append((file_path, total_pages, pr, is_pdf))
@@ -137,21 +137,24 @@ class BatchProcessor:
                 overwrite=self.config.overwrite
             )
 
-            # Perform export
+            # Perform export with clamped page ranges
+            clamped_start = max(1, min(start_p, total_pages))
+            clamped_end = max(clamped_start, min(end_p, total_pages))
+
             try:
                 if is_pdf:
                     PdfPageExtractor.extract_range(
                         source_file=file_path,
                         output_file=output_file_path,
-                        start_page=start_p,
-                        end_page=end_p
+                        start_page=clamped_start,
+                        end_page=clamped_end
                     )
                 else:
                     PageExporterEngine.export_range(
                         source_file=file_path,
                         output_file=output_file_path,
-                        start_page=start_p,
-                        end_page=end_p,
+                        start_page=clamped_start,
+                        end_page=clamped_end,
                         export_format=fmt,
                         mode=self.config.engine_mode,
                         visible=self.config.visible
