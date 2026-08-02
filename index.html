@@ -19,21 +19,36 @@
   </header>
 
   <main class="layout">
-    {% if not is_windows_com %}
-    <div class="info-banner">
-      ℹ️ <strong>Server Mode Notice:</strong> Running on a non-Windows server (OnRender). High-fidelity Word (.docx) splitting requires Microsoft Word. For perfect page cuts on the server, please upload the <strong>PDF version</strong> of your document.
-    </div>
-    {% endif %}
-
     <section class="left">
-      <div class="card">
-        <h2>1. Select Input Word Documents</h2>
-        <div id="dropzone" class="dropzone">
-          <p>Drag &amp; drop Word documents or PDFs here</p>
-          <p class="muted">or</p>
-          <button type="button" class="btn" id="pickFilesBtn">+ Add Files</button>
-          <input type="file" id="fileInput" multiple accept=".docx,.doc,.docm,.dotx,.dotm,.rtf,.pdf" hidden />
+      <div class="card card-active" id="step1">
+        <h2>1. Select Documents</h2>
+        
+        <!-- Tab buttons to switch between Upload and Server Path -->
+        <div class="tab-container" style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <button type="button" class="btn" id="tabUpload" style="flex: 1; background: var(--accent); color: var(--bg); font-weight: 600; padding: 6px 12px; font-size: 0.85rem;">Upload Files</button>
+          <button type="button" class="btn" id="tabServerPath" style="flex: 1; background: var(--card-bg); border: 1px solid var(--border); font-weight: 600; padding: 6px 12px; font-size: 0.85rem;">Server File Path</button>
         </div>
+
+        <!-- Tab 1: Upload (default) -->
+        <div id="uploadContainer">
+          <div class="dropzone" id="dropzone">
+            <p>Drag & drop Word (.docx) or PDF files here, or click to upload</p>
+            <button type="button" class="btn" id="pickFilesBtn">+ Add Files</button>
+            <input type="file" id="fileInput" multiple accept=".docx,.doc,.docm,.dotx,.dotm,.rtf,.pdf" hidden />
+          </div>
+        </div>
+
+        <!-- Tab 2: Server Path -->
+        <div id="serverPathContainer" style="display: none; padding: 12px; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 6px; margin-bottom: 12px;">
+          <label class="field" style="margin: 0;">
+            <span style="font-weight: 500; font-size: 0.85rem; margin-bottom: 6px; display: block;">Absolute File Path on Server</span>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="serverPathInput" placeholder="e.g. C:\Users\Hxtreme\Downloads\document.docx" style="flex: 1; font-family: inherit; font-size: 0.9rem;" />
+              <button type="button" class="btn" id="addServerPathBtn" style="padding: 0 16px; font-weight: 600; font-size: 0.85rem;">Add Path</button>
+            </div>
+          </label>
+        </div>
+
         <ul id="fileList" class="file-list"></ul>
       </div>
 

@@ -89,26 +89,15 @@ function renderFiles() {
 
     const info = document.createElement("div");
     info.className = "file-info";
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.className = "file-select-check";
-    checkbox.dataset.name = f.name;
-    checkbox.checked = f.checked !== false;
-    checkbox.style.marginRight = "10px";
-    checkbox.style.cursor = "pointer";
-    checkbox.onchange = () => {
-      f.checked = checkbox.checked;
-    };
-
     const nameEl = document.createElement("span");
     nameEl.className = "file-name";
     nameEl.title = f.name;
     nameEl.textContent = f.name;
     const meta = document.createElement("span");
     meta.className = "muted";
-    meta.textContent = " · " + fmtSize(f.size) + (f.pages != null ? " · " + f.pages + " pages" : "");
-    info.append(checkbox, nameEl, meta);
+    const sizeText = f.isServerPath ? "[Server Path]" : fmtSize(f.size);
+    meta.textContent = " · " + sizeText + (f.pages != null ? " · " + f.pages + " pages" : "");
+    info.append(nameEl, meta);
 
     const actions = document.createElement("div");
     const previewBtn = document.createElement("button");
@@ -323,12 +312,11 @@ async function updatePreview() {
 /* ---------------- Export flow ---------------- */
 
 async function startExport() {
-  const selectedFiles = state.files.filter(f => f.checked !== false).map(f => f.name);
-  if (selectedFiles.length === 0) { alert("Select at least one document to export."); return; }
+  if (state.files.length === 0) { alert("Add at least one document first."); return; }
   if (!$("rangeInput").value.trim()) { alert("Enter a valid page range."); return; }
 
   const body = {
-    files: selectedFiles,
+    files: state.files.map((f) => f.name),
     range: $("rangeInput").value.trim(),
     format: $("formatSelect").value,
     output_dir: $("outputDirInput").value.trim(),
@@ -501,9 +489,51 @@ function resetSession() {
   $("cancelBtn").disabled = true;
   schedulePreview();
   appendLog("info", "Session cleared.");
+
+  // Reset server path tab
+  $("serverPathInput").value = "";
+  if ($("tabUpload")) $("tabUpload").click();
 }
 
 /* ---------------- Events ---------------- */
+
+// Tab switcher logic
+if ($("tabUpload") && $("tabServerPath")) {
+  $("tabUpload").addEventListener("click", () => {
+    $("tabUpload").style.background = "var(--accent)";
+    $("tabUpload").style.color = "var(--bg)";
+    $("tabServerPath").style.background = "var(--card-bg)";
+    $("tabServerPath").style.color = "var(--text)";
+    $("uploadContainer").style.display = "block";
+    $("serverPathContainer").style.display = "none";
+  });
+
+  $("tabServerPath").addEventListener("click", () => {
+    $("tabServerPath").style.background = "var(--accent)";
+    $("tabServerPath").style.color = "var(--bg)";
+    $("tabUpload").style.background = "var(--card-bg)";
+    $("tabUpload").style.color = "var(--text)";
+    $("uploadContainer").style.display = "none";
+    $("serverPathContainer").style.display = "block";
+  });
+}
+
+if ($("addServerPathBtn")) {
+  $("addServerPathBtn").addEventListener("click", () => {
+    const pathVal = $("serverPathInput").value.trim();
+    if (!pathVal) return;
+
+    if (state.files.some((f) => f.name === pathVal)) {
+      alert("This path has already been added.");
+      return;
+    }
+
+    state.files.push({ name: pathVal, size: 0, pages: null, isServerPath: true });
+    renderFiles();
+    $("serverPathInput").value = "";
+    schedulePreview();
+  });
+}
 
 $("pickFilesBtn").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (e) => {
