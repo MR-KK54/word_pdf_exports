@@ -1,0 +1,7 @@
+# Word PDF Exports Project Rules
+
+## Git & Deployment Workflow
+- Always prepare and commit all code changes locally with clear, descriptive commit messages.
+- Never run direct `git push` commands from the terminal (they will fail authentication).
+- Instruct the user to push the commits manually via GitHub Desktop.
+- Explain to the user that pushing to GitHub automatically triggers the Render server deployment.
