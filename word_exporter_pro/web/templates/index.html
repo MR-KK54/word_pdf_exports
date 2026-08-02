@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Word and PDF Page Exporter Pro</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="static/style.css" />
 </head>
 <body>
   <header class="header">
@@ -14,11 +14,17 @@
     </div>
     <div class="header-actions">
       <button type="button" class="btn reset" id="resetBtn">Clear Session</button>
-      <div class="server-badge">Local Web Server</div>
+      <div class="server-badge">Live Web App</div>
     </div>
   </header>
 
   <main class="layout">
+    {% if not is_windows_com %}
+    <div class="info-banner">
+      ℹ️ <strong>Server Mode Notice:</strong> Running on a non-Windows server (OnRender). High-fidelity Word (.docx) splitting requires Microsoft Word. For perfect page cuts on the server, please upload the <strong>PDF version</strong> of your document.
+    </div>
+    {% endif %}
+
     <section class="left">
       <div class="card">
         <h2>1. Select Input Word Documents</h2>
@@ -65,7 +71,7 @@
         <p class="muted hint">PDF input files are always exported as PDF.</p>
         <label class="field">
           <span>Output Directory (on server)</span>
-          <input type="text" id="outputDirInput" value="{{ default_output_dir }}" placeholder="e.g. D:\exports\pages" />
+          <input type="text" id="outputDirInput" value="./exported_pages" placeholder="e.g. D:\exports\pages" />
         </label>
         <label class="field">
           <span>Naming Template</span>
@@ -156,6 +162,6 @@
     <div id="modalBox" class="modal-box"><img id="modalImg" alt="Preview" /></div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="static/app.js"></script>
 </body>
 </html>
