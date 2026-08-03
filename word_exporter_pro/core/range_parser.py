@@ -16,7 +16,7 @@ class PageRangeParser:
     """Parses user input range strings into structured (start_page, end_page) list."""
 
     @staticmethod
-    def parse(range_str: str, total_pages: int, clamp_to_total: bool = True) -> List[Tuple[int, int]]:
+    def parse(range_str: str, total_pages: int) -> List[Tuple[int, int]]:
         """
         Parses a page range specification string.
 
@@ -92,12 +92,8 @@ class PageRangeParser:
                         raise RangeParseError(f"Invalid end page '{raw_end}' in segment '{part}'.")
 
                 # Clamp pages safely to [1, total_pages]
-                if clamp_to_total:
-                    start_page = max(1, min(start_page, total_pages))
-                    end_page = max(start_page, min(end_page, total_pages))
-                else:
-                    start_page = max(1, start_page)
-                    end_page = max(start_page, end_page)
+                start_page = max(1, min(start_page, total_pages))
+                end_page = max(start_page, min(end_page, total_pages))
 
                 result_ranges.append((start_page, end_page))
 
@@ -111,10 +107,7 @@ class PageRangeParser:
                     except ValueError:
                         raise RangeParseError(f"Invalid page number or identifier '{part}'.")
 
-                if clamp_to_total:
-                    page_num = max(1, min(page_num, total_pages))
-                else:
-                    page_num = max(1, page_num)
+                page_num = max(1, min(page_num, total_pages))
                 result_ranges.append((page_num, page_num))
 
         return result_ranges

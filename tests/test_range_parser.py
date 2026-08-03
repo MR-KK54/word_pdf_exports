@@ -71,13 +71,3 @@ def test_invalid_syntax_errors():
 def test_format_range_summary():
     assert PageRangeParser.format_range_summary([(1, 3), (5, 5), (8, 10)]) == "1-3, 5, 8-10"
 
-
-def test_range_no_clamping():
-    # Verify that when clamp_to_total=False, the parsed ranges are not clamped to the upper bound
-    ranges = PageRangeParser.parse("1-50", total_pages=10, clamp_to_total=False)
-    assert ranges == [(1, 50)]
-
-    ranges = PageRangeParser.parse("3-4, 5-6", total_pages=2, clamp_to_total=False)
-    assert ranges == [(3, 4), (5, 6)]
-
-

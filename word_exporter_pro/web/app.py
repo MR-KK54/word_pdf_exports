@@ -55,23 +55,16 @@ def _store_upload(file_storage) -> dict:
 
 
 def _resolve_upload(name: str) -> str:
-    """Finds the path of an uploaded file, handling subdirectories recursively if needed."""
-    if not name:
-        raise FileNotFoundError()
-    
-    # Direct absolute or relative path on server filesystem
-    if os.path.exists(name):
-        return os.path.abspath(name)
-
-    base = os.path.basename(name)
-    direct = os.path.join(UPLOAD_DIR, base)
+    """Resolves an uploaded filename to its stored path (newest wins on duplicates)."""
+    name = os.path.basename(name)
+    direct = os.path.join(UPLOAD_DIR, name)
     if os.path.isfile(direct):
         return direct
     best, best_mtime = None, 0.0
     for entry in os.listdir(UPLOAD_DIR):
         sub = os.path.join(UPLOAD_DIR, entry)
         if os.path.isdir(sub):
-            candidate = os.path.join(sub, base)
+            candidate = os.path.join(sub, name)
             if os.path.isfile(candidate):
                 mtime = os.path.getmtime(candidate)
                 if mtime >= best_mtime:
@@ -109,7 +102,7 @@ def api_upload():
 @app.route("/api/inspect", methods=["POST"])
 def api_inspect():
     data = request.get_json(silent=True) or {}
-    name = str(data.get("name", ""))
+    name = os.path.basename(str(data.get("name", "")))
     try:
         path = _resolve_upload(name)
     except FileNotFoundError:

@@ -84,14 +84,10 @@ class BatchProcessor:
                     info = DocumentInspector.get_info(file_path, visible=self.config.visible)
                 total_pages = info["page_count"]
                 
-                # Parse range expression for this document (do not clamp to total pages yet for naming)
-                parsed_ranges = PageRangeParser.parse(self.config.range_expression, total_pages, clamp_to_total=False)
+                # Parse range expression for this document
+                parsed_ranges = PageRangeParser.parse(self.config.range_expression, total_pages)
                 
                 for pr in parsed_ranges:
-                    start_p, end_p = pr
-                    if start_p > total_pages:
-                        logger.warning(f"Skipping out-of-bounds range [{start_p}-{end_p}] for '{os.path.basename(file_path)}' (total pages: {total_pages})")
-                        continue
                     job_tasks.append((file_path, total_pages, pr, is_pdf))
             except Exception as e:
                 err_msg = f"Failed pre-processing '{os.path.basename(file_path)}': {e}"
@@ -141,24 +137,21 @@ class BatchProcessor:
                 overwrite=self.config.overwrite
             )
 
-            # Perform export with clamped page ranges
-            clamped_start = max(1, min(start_p, total_pages))
-            clamped_end = max(clamped_start, min(end_p, total_pages))
-
+            # Perform export
             try:
                 if is_pdf:
                     PdfPageExtractor.extract_range(
                         source_file=file_path,
                         output_file=output_file_path,
-                        start_page=clamped_start,
-                        end_page=clamped_end
+                        start_page=start_p,
+                        end_page=end_p
                     )
                 else:
                     PageExporterEngine.export_range(
                         source_file=file_path,
                         output_file=output_file_path,
-                        start_page=clamped_start,
-                        end_page=clamped_end,
+                        start_page=start_p,
+                        end_page=end_p,
                         export_format=fmt,
                         mode=self.config.engine_mode,
                         visible=self.config.visible
