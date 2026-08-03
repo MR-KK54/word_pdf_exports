@@ -86,7 +86,17 @@ def _resolve_upload(name: str) -> str:
 
 @app.route("/")
 def index():
-    return render_template("index.html", default_output_dir=DEFAULT_OUTPUT_DIR)
+    try:
+        import pythoncom
+        import win32com.client
+        is_windows_com = (pythoncom is not None and win32com is not None)
+    except ImportError:
+        is_windows_com = False
+    return render_template(
+        "index.html",
+        default_output_dir=DEFAULT_OUTPUT_DIR,
+        is_windows_com=is_windows_com
+    )
 
 
 @app.route("/api/upload", methods=["POST"])

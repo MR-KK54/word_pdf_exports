@@ -57,6 +57,18 @@ body {
   font-weight: 600;
 }
 
+.info-banner {
+  background: rgba(43, 127, 255, 0.1);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 12px 18px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  grid-column: 1 / -1;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -415,7 +427,6 @@ input[type="text"]:focus, select:focus {
   cursor: zoom-in;
 }
 
-/* Fullscreen preview modal */
 .modal {
   position: fixed;
   inset: 0;
