@@ -228,6 +228,12 @@ class PageExporterEngine:
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
+            if export_format.lower() == "pdf":
+                raise RuntimeError(
+                    f"Unable to export Word document '{os.path.basename(source_file)}' to PDF format on this server. "
+                    "Microsoft Word is required for high-fidelity DOCX-to-PDF conversion. "
+                    "Please run this operation locally on a Windows machine with Microsoft Word installed."
+                )
             return PageExporterEngine._export_by_docx_fallback(
                 abs_source, abs_output, start_page, end_page, export_format
             )
