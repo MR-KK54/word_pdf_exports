@@ -95,7 +95,8 @@ function renderFiles() {
     nameEl.textContent = f.name;
     const meta = document.createElement("span");
     meta.className = "muted";
-    meta.textContent = " · " + fmtSize(f.size) + (f.pages != null ? " · " + f.pages + " pages" : "");
+    const sizeText = f.isServerPath ? "[Server Path]" : fmtSize(f.size);
+    meta.textContent = " · " + sizeText + (f.pages != null ? " · " + f.pages + " pages" : "");
     info.append(nameEl, meta);
 
     const actions = document.createElement("div");
@@ -488,6 +489,10 @@ function resetSession() {
   $("cancelBtn").disabled = true;
   schedulePreview();
   appendLog("info", "Session cleared.");
+
+  // Reset server path tab inputs and state
+  if ($("serverPathInput")) $("serverPathInput").value = "";
+  if ($("tabUpload")) $("tabUpload").click();
 }
 
 /* ---------------- Events ---------------- */
@@ -594,3 +599,43 @@ const defaultOutputDir = $("outputDirInput").value;
 setProgress(0, 0);
 updatePreviewNav();
 schedulePreview();
+
+// Tab switcher logic
+if ($("tabUpload") && $("tabServerPath")) {
+  $("tabUpload").addEventListener("click", () => {
+    $("tabUpload").style.background = "var(--accent)";
+    $("tabUpload").style.color = "var(--text)";
+    $("tabServerPath").style.background = "var(--panel-2)";
+    $("tabServerPath").style.border = "1px solid var(--border)";
+    $("tabServerPath").style.color = "var(--muted)";
+    $("uploadContainer").style.display = "block";
+    $("serverPathContainer").style.display = "none";
+  });
+
+  $("tabServerPath").addEventListener("click", () => {
+    $("tabServerPath").style.background = "var(--accent)";
+    $("tabServerPath").style.color = "var(--text)";
+    $("tabUpload").style.background = "var(--panel-2)";
+    $("tabUpload").style.border = "1px solid var(--border)";
+    $("tabUpload").style.color = "var(--muted)";
+    $("uploadContainer").style.display = "none";
+    $("serverPathContainer").style.display = "block";
+  });
+}
+
+if ($("addServerPathBtn")) {
+  $("addServerPathBtn").addEventListener("click", () => {
+    const pathVal = $("serverPathInput").value.trim();
+    if (!pathVal) return;
+
+    if (state.files.some((f) => f.name === pathVal)) {
+      alert("This path has already been added.");
+      return;
+    }
+
+    state.files.push({ name: pathVal, size: 0, pages: null, isServerPath: true });
+    renderFiles();
+    $("serverPathInput").value = "";
+    schedulePreview();
+  });
+}
