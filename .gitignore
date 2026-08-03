@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 
 # Pytest & Caches
 .pytest_cache/
@@ -21,6 +22,11 @@ htmlcov/
 exported_pages/
 scratch/
 uploads/
+
+# Local data / test artifacts
+Downloads/
+test_table_footer_main.docx
+test_table_footer_trim.docx
 
 # Environments
 .venv/
