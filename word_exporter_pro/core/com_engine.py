@@ -477,6 +477,45 @@ class PageExporterEngine:
                 break
             guard += 1
 
+        # When the kept range ends with a table, Word leaves a trailing empty
+        # paragraph after the table. After the tail is deleted that paragraph can
+        # overflow onto an extra page (e.g. a requested single page becomes two).
+        # Word refuses to delete the document's final paragraph mark, so shrink the
+        # trailing empty paragraph and compact the last table row's spacing until the
+        # requested page count is reached.
+        guard = 0
+        while guard < 30:
+            current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+            if current_pages <= expected_keep:
+                break
+            guard += 1
+            try:
+                last_para = doc.Paragraphs(doc.Paragraphs.Count)
+                if last_para.Range.Text.strip("\r\x07"):
+                    break
+                # A table that ends flush with the bottom margin pushes the trailing
+                # empty paragraph onto an extra page. Shrinking that paragraph alone
+                # is not always enough, so compact the last table row's spacing too.
+                last_para.Range.Font.Size = 1
+                last_para.Range.ParagraphFormat.SpaceBefore = 0
+                last_para.Range.ParagraphFormat.SpaceAfter = 0
+                last_para.Range.ParagraphFormat.LineSpacingRule = 0
+                try:
+                    last_table = doc.Tables(doc.Tables.Count)
+                    last_row = last_table.Rows(last_table.Rows.Count)
+                    if not last_row.Range.Information(12):
+                        raise RuntimeError("not a table row")
+                    for cell in last_row.Cells:
+                        for para in cell.Range.Paragraphs:
+                            para.Range.ParagraphFormat.SpaceBefore = 0
+                            para.Range.ParagraphFormat.SpaceAfter = 0
+                            para.Range.ParagraphFormat.LineSpacingRule = 0
+                except Exception:
+                    pass
+            except Exception:
+                break
+            guard += 1
+
     @staticmethod
     def _clean_page_boundary(word_app, doc, front_of_doc: bool) -> None:
         """Remove a stray leading/trailing page-break or blank paragraph left at the
