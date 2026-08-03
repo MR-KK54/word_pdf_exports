@@ -88,14 +88,6 @@ class BatchProcessor:
                 parsed_ranges = PageRangeParser.parse(self.config.range_expression, total_pages, clamp_to_total=False)
                 
                 for pr in parsed_ranges:
-                    start_p, end_p = pr
-                    # Skip completely out-of-bounds ranges (where start_page is past total_pages)
-                    if start_p > total_pages:
-                        logger.warning(
-                            f"Skipping out-of-bounds range '{start_p}-{end_p}' for '{os.path.basename(file_path)}' "
-                            f"(document has {total_pages} page(s))."
-                        )
-                        continue
                     job_tasks.append((file_path, total_pages, pr, is_pdf))
             except Exception as e:
                 err_msg = f"Failed pre-processing '{os.path.basename(file_path)}': {e}"
