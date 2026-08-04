@@ -6,10 +6,14 @@ Modern Desktop UI built with CustomTkinter.
 import os
 import sys
 import queue
+import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from typing import List, Optional, Dict, Any
+
+import fitz  # PyMuPDF
+from PIL import Image, ImageDraw, ImageFont
 
 from word_exporter_pro.core.com_engine import DocumentInspector
 from word_exporter_pro.core.pdf_engine import PdfInspector
@@ -38,6 +42,12 @@ class WordExporterApp(ctk.CTk):
         self.source_files: List[str] = []
         self.current_processor: Optional[BatchProcessor] = None
         self.ui_queue = queue.Queue()
+
+        # Document Page Preview State
+        self.preview_page_idx = 1
+        self.preview_total_pages = 1
+        self.current_preview_file = None
+        self.current_ctk_image = None
 
         # Build UI layout
         self._init_layout()
@@ -314,6 +324,13 @@ class WordExporterApp(ctk.CTk):
         )
         self.start_btn.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
+        self.open_output_btn = ctk.CTkButton(
+            act_btn_row, text="📂 Open Output Folder", font=ctk.CTkFont(size=12, weight="bold"),
+            height=40, fg_color="#2980B9", hover_color="#1F618D",
+            command=self._open_output_dir
+        )
+        self.open_output_btn.pack(side="left", padx=(0, 10))
+
         self.cancel_btn = ctk.CTkButton(
             act_btn_row, text="⏹ Cancel", width=90, height=40,
             fg_color="#C0392B", hover_color="#962D22", state="disabled",
@@ -321,7 +338,7 @@ class WordExporterApp(ctk.CTk):
         )
         self.cancel_btn.pack(side="right")
 
-        # Quick Inspector Card
+        # Quick Inspector Card with Live Page Image Preview
         inspect_card = ctk.CTkFrame(right_panel)
         inspect_card.grid(row=1, column=0, sticky="ew", pady=(0, 15))
         inspect_card.grid_columnconfigure(0, weight=1)
@@ -330,17 +347,40 @@ class WordExporterApp(ctk.CTk):
         ins_header.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
         ins_header.grid_columnconfigure(0, weight=1)
 
-        ins_title = ctk.CTkLabel(ins_header, text="Document Inspection", font=ctk.CTkFont(size=13, weight="bold"))
+        ins_title = ctk.CTkLabel(ins_header, text="Document Inspection & Live Page Preview", font=ctk.CTkFont(size=13, weight="bold"))
         ins_title.grid(row=0, column=0, sticky="w")
 
         inspect_btn = ctk.CTkButton(ins_header, text="🔍 Inspect Doc", width=100, height=24, command=self._inspect_selected)
         inspect_btn.grid(row=0, column=1, sticky="e")
 
         self.inspect_txt = ctk.CTkLabel(
-            inspect_card, text="Select a document and click 'Inspect Doc' to detect Word rendering engine page counts.",
+            inspect_card, text="Select a document to inspect and view page previews.",
             font=ctk.CTkFont(size=11), text_color="gray60", justify="left", wraplength=380
         )
-        self.inspect_txt.grid(row=1, column=0, padx=15, pady=(0, 10), sticky="w")
+        self.inspect_txt.grid(row=1, column=0, padx=15, pady=(0, 5), sticky="w")
+
+        # Live Image Preview Container Box
+        self.preview_box = ctk.CTkFrame(inspect_card, fg_color=("gray90", "gray18"))
+        self.preview_box.grid(row=2, column=0, padx=15, pady=(5, 12), sticky="ew")
+        self.preview_box.grid_columnconfigure(0, weight=1)
+
+        self.preview_img_lbl = ctk.CTkLabel(
+            self.preview_box, text="📄 Load a document to display visual page preview", font=ctk.CTkFont(size=11), text_color="gray50"
+        )
+        self.preview_img_lbl.grid(row=0, column=0, padx=10, pady=10)
+
+        # Page Navigation Row
+        p_nav_row = ctk.CTkFrame(self.preview_box, fg_color="transparent")
+        p_nav_row.grid(row=1, column=0, padx=10, pady=(0, 8))
+
+        self.prev_p_btn = ctk.CTkButton(p_nav_row, text="◀ Prev Page", width=80, height=24, font=ctk.CTkFont(size=11), state="disabled", command=self._prev_preview_page)
+        self.prev_p_btn.pack(side="left", padx=5)
+
+        self.page_num_lbl = ctk.CTkLabel(p_nav_row, text="Page 1 / 1", font=ctk.CTkFont(size=11, weight="bold"))
+        self.page_num_lbl.pack(side="left", padx=10)
+
+        self.next_p_btn = ctk.CTkButton(p_nav_row, text="Next Page ▶", width=80, height=24, font=ctk.CTkFont(size=11), state="disabled", command=self._next_preview_page)
+        self.next_p_btn.pack(side="left", padx=5)
 
         # Log Console Card
         log_card = ctk.CTkFrame(right_panel)
@@ -459,6 +499,88 @@ class WordExporterApp(ctk.CTk):
         except Exception as e:
             self.preview_val_lbl.configure(text=f"[Pattern Error: {e}]", text_color="#E74C3C")
 
+    def _open_output_dir(self):
+        out_dir = self.dest_entry.get().strip() or os.path.abspath("exported_pages")
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(out_dir)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", out_dir])
+        else:
+            subprocess.run(["xdg-open", out_dir])
+
+    def _prev_preview_page(self):
+        if self.preview_page_idx > 1:
+            self.preview_page_idx -= 1
+            if self.current_preview_file:
+                self._load_page_preview(self.current_preview_file, self.preview_page_idx)
+
+    def _next_preview_page(self):
+        if self.preview_page_idx < self.preview_total_pages:
+            self.preview_page_idx += 1
+            if self.current_preview_file:
+                self._load_page_preview(self.current_preview_file, self.preview_page_idx)
+
+    def _load_page_preview(self, file_path: str, page_num: int):
+        if not file_path or not os.path.exists(file_path):
+            return
+
+        self.current_preview_file = file_path
+        import threading
+
+        def worker():
+            try:
+                ext = os.path.splitext(file_path)[1].lower()
+                pil_img = None
+                total_p = 1
+
+                if ext == ".pdf":
+                    doc = fitz.open(file_path)
+                    total_p = len(doc)
+                    page_idx = max(0, min(page_num - 1, total_p - 1))
+                    page = doc[page_idx]
+                    pix = page.get_pixmap(dpi=120)
+                    pil_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    doc.close()
+                else:
+                    info = DocumentInspector.get_info(file_path, visible=False)
+                    total_p = max(1, info.get("page_count", 1))
+                    
+                    # Render a clean document page graphic preview thumbnail
+                    w, h = 320, 420
+                    img = Image.new("RGB", (w, h), (245, 247, 250))
+                    draw = ImageDraw.Draw(img)
+                    
+                    draw.rectangle([10, 10, w - 10, h - 10], fill=(255, 255, 255), outline=(200, 205, 215), width=2)
+                    draw.rectangle([20, 25, w - 20, 65], fill=(79, 70, 229))
+                    
+                    fn = os.path.basename(file_path)
+                    if len(fn) > 28:
+                        fn = fn[:25] + "..."
+                    draw.text((30, 36), fn, fill=(255, 255, 255))
+                    
+                    for i in range(12):
+                        y = 90 + (i * 24)
+                        draw.line([30, y, w - 30, y], fill=(210, 215, 225), width=4)
+                    
+                    draw.text((w // 2 - 40, h - 35), f"Page {page_num} of {total_p}", fill=(100, 110, 125))
+                    pil_img = img
+
+                if pil_img:
+                    target_h = 210
+                    ratio = target_h / float(pil_img.height)
+                    target_w = max(140, int(pil_img.width * ratio))
+                    pil_img = pil_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                    
+                    ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(target_w, target_h))
+                    self.ui_queue.put(("preview_image", (ctk_img, page_num, total_p)))
+
+            except Exception as e:
+                logger.error(f"Error loading page preview: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _inspect_selected(self, quiet: bool = False):
         if not self.source_files:
             if not quiet:
@@ -467,6 +589,8 @@ class WordExporterApp(ctk.CTk):
 
         first_file = self.source_files[0]
         self.inspect_txt.configure(text=f"Inspecting '{os.path.basename(first_file)}'...")
+        self.preview_page_idx = 1
+        self._load_page_preview(first_file, 1)
         
         # Async inspect
         import threading
@@ -552,6 +676,16 @@ class WordExporterApp(ctk.CTk):
                 if event_type == "inspect_res":
                     self.inspect_txt.configure(text=payload)
 
+                elif event_type == "preview_image":
+                    ctk_img, page_num, total_p = payload
+                    self.current_ctk_image = ctk_img
+                    self.preview_total_pages = total_p
+                    self.preview_page_idx = page_num
+                    self.preview_img_lbl.configure(image=ctk_img, text="")
+                    self.page_num_lbl.configure(text=f"Page {page_num} / {total_p}")
+                    self.prev_p_btn.configure(state="normal" if page_num > 1 else "disabled")
+                    self.next_p_btn.configure(state="normal" if page_num < total_p else "disabled")
+
                 elif event_type == "progress":
                     completed, total, filename, status = payload
                     pct = (completed / total) if total > 0 else 0.0
@@ -565,6 +699,7 @@ class WordExporterApp(ctk.CTk):
                     self.progress_bar.set(1.0 if fail == 0 else self.progress_bar.get())
                     self.status_lbl.configure(text=f"Finished: {success} succeeded, {fail} failed.")
                     if fail == 0 and success > 0:
+                        self.open_output_btn.configure(fg_color="#27AE60", text="📂 Open Output Folder (Saved)")
                         messagebox.showinfo("Export Complete", f"Successfully exported {success} page document(s) to:\n{self.dest_entry.get()}")
 
                 elif event_type == "log":
