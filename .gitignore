@@ -1,3 +1,8 @@
+# Build & PyInstaller outputs
+build/
+dist/
+scratch_*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
