@@ -266,7 +266,7 @@ class WordExporterApp(ctk.CTk):
         engine_opt = ctk.CTkOptionMenu(
             adv_card,
             variable=self.engine_var,
-            values=["trimming", "selection"]
+            values=["trimming", "aspose", "selection"]
         )
         engine_opt.grid(row=1, column=1, padx=15, pady=5, sticky="w")
 

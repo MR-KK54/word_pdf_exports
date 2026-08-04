@@ -25,6 +25,15 @@ from word_exporter_pro.utils.logger import get_logger
 logger = get_logger()
 
 
+# Table row layout cache, keyed by (id(doc), table.Range.Start, table.Range.End,
+# table.Rows.Count). Layout of a table only changes when its rows are added or
+# deleted, and the key changes on every row delete, so the cached positions stay
+# valid. Building a 120-row layout costs several seconds of COM round-trips, and
+# the same layout is needed repeatedly within one export (boundary snap, front and
+# back trimming, section lookup), so caching is a large speed win.
+_TABLE_ROW_LAYOUT_CACHE: Dict[Tuple[int, int, int, int], Tuple[dict, int]] = {}
+
+
 def _require_word_com() -> None:
     if pythoncom is None or win32com is None:
         raise RuntimeError(
@@ -37,6 +46,7 @@ def _require_word_com() -> None:
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
 WD_STATISTIC_PAGES = 2
+WD_ACTIVE_END_PAGE_NUMBER = 3
 WD_ALERTS_NONE = 0
 
 EXPORT_FORMAT_MAP = {
@@ -133,6 +143,19 @@ class DocumentInspector:
             "format": os.path.splitext(abs_path)[1].lower().lstrip("."),
         }
 
+        # Check Aspose.Words layout engine inspection first if available
+        if aw is not None:
+            try:
+                doc = aw.Document(abs_path)
+                info["page_count"] = doc.page_count
+                info["section_count"] = len(doc.sections)
+                info["title"] = str(doc.built_in_document_properties.title or "")
+                info["author"] = str(doc.built_in_document_properties.author or "")
+                logger.info(f"Inspected '{info['filename']}' via Aspose.Words Layout Engine: {info['page_count']} page(s)")
+                return info
+            except Exception as aspose_err:
+                logger.warning(f"Aspose.Words inspection warning: {aspose_err}")
+
         # Server fallback for non-Windows / Linux server environments without win32com
         if pythoncom is None or win32com is None:
             if docx is not None and info["format"] in ("docx", "docm", "dotx"):
@@ -214,7 +237,7 @@ class PageExporterEngine:
             start_page: 1-indexed start page.
             end_page: 1-indexed end page.
             export_format: Output format ('docx', 'pdf', 'doc', 'rtf', 'docm').
-            mode: Extraction method ('trimming' or 'selection').
+            mode: Extraction method ('trimming', 'aspose', or 'selection').
             visible: Whether Word app runs visibly.
 
         Returns:
@@ -225,6 +248,11 @@ class PageExporterEngine:
         os.makedirs(os.path.dirname(abs_output), exist_ok=True)
 
         logger.info(f"Starting page export [{start_page}-{end_page}] from '{os.path.basename(abs_source)}' -> '{os.path.basename(abs_output)}'")
+
+        if mode == "aspose":
+            return PageExporterEngine._export_by_aspose(
+                abs_source, abs_output, start_page, end_page, export_format
+            )
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
@@ -250,6 +278,43 @@ class PageExporterEngine:
             return PageExporterEngine._export_by_selection(
                 abs_source, abs_output, start_page, end_page, fmt_code, visible
             )
+
+    @staticmethod
+    def _export_by_aspose(
+        abs_source: str,
+        abs_output: str,
+        start_page: int,
+        end_page: int,
+        export_format: str
+    ) -> str:
+        """Aspose.Words Layout Engine: High-accuracy cross-platform page range extraction."""
+        if aw is None:
+            logger.warning("aspose-words module not installed. Falling back to standard engine.")
+            if pythoncom not in (None,) and win32com not in (None,):
+                fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower(), 16)
+                return PageExporterEngine._export_by_trimming(
+                    abs_source, abs_output, start_page, end_page, fmt_code, False
+                )
+            else:
+                return PageExporterEngine._export_by_docx_fallback(
+                    abs_source, abs_output, start_page, end_page, export_format
+                )
+
+        try:
+            doc = aw.Document(abs_source)
+            total_pages = doc.page_count
+            start_clamped = max(1, min(start_page, total_pages))
+            end_clamped = max(start_clamped, min(end_page, total_pages))
+            count = end_clamped - start_clamped + 1
+
+            # Extract exact page range using Aspose.Words Layout Engine
+            extracted_doc = doc.extract_pages(start_clamped - 1, count)
+            extracted_doc.save(abs_output)
+            logger.success(f"Exported pages [{start_page}-{end_page}] via Aspose.Words Layout Engine to '{abs_output}'")
+            return abs_output
+        except Exception as e:
+            logger.error(f"Aspose.Words Layout Engine error: {e}")
+            raise RuntimeError(f"Aspose.Words Layout Engine failed to process document: {e}")
 
     @staticmethod
     def _export_by_docx_fallback(
@@ -330,43 +395,67 @@ class PageExporterEngine:
 
                 try:
                     total_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
-                    
+
                     start_page = max(1, min(start_page, total_pages))
                     end_page = max(start_page, min(end_page, total_pages))
                     expected_keep = end_page - start_page + 1
 
-                    # 1. Trim the FRONT: delete everything up to the start of the kept page.
+                    # Compute the page boundaries on the UNTOUCHED source document.
+                    # Trimming the copy re-paginates it, so GoTo(page) on the copy
+                    # drifts from the source's true boundaries whenever a table row
+                    # spans a page cut. The source positions are exact and remain
+                    # valid in the byte-identical copy until that region is cut.
+                    # Page starts come from Range.Information(wdActiveEndPageNumber)
+                    # via a binary search because GoTo(page) reports unreliable
+                    # boundaries in headless COM Word.
+                    source_doc = word_app.Documents.Open(
+                        FileName=abs_source,
+                        ReadOnly=True,
+                        ConfirmConversions=False,
+                        AddToRecentFiles=False,
+                        Visible=False
+                    )
+                    start_pos = PageExporterEngine._page_start_by_position(source_doc, start_page)
+                    if end_page >= total_pages:
+                        end_pos = source_doc.Content.End
+                    else:
+                        end_pos = PageExporterEngine._page_start_by_position(source_doc, end_page + 1)
+
+                    # 1. Trim the BACK first using the source boundary. Deleting
+                    #    content AFTER `start_pos` never shifts content before it, so
+                    #    the front boundary stays valid for the second cut.
+                    if end_pos < doc.Content.End:
+                        PageExporterEngine._delete_range_after(word_app, doc, end_pos)
+
+                    # 2. Trim the FRONT using the source boundary.
                     if start_page > 1:
-                        start_pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=start_page).Start
-                        PageExporterEngine._delete_range(
-                            word_app, doc.Range(Start=doc.Content.Start, End=start_pos)
+                        PageExporterEngine._trim_front_to_page(
+                            word_app, doc, start_page, start_pos
                         )
 
-                    # 2. Trim the BACK: keep exactly `expected_keep` pages. Recomputes pagination
-                    #    between deletions because Word may collapse a blank page after each cut.
-                    PageExporterEngine._trim_tail_to_keep(word_app, doc, expected_keep)
-
                     # 3. Remove any stray page-break/blank paragraph left at the cut edges so no
-                    #    spurious blank front/back page survives in the trimmed result.
-                    #    The front edge is only cleaned when a front trim actually occurred,
-                    #    so a legitimate leading page-break on a range starting at page 1 is kept.
+                    #    spurious blank front/back page survives in the trimmed result. This runs
+                    #    BEFORE the page-count compaction below: a leading empty paragraph before
+                    #    a table (which Word keeps when everything before it is deleted) would
+                    #    otherwise push the count over by one page and make the compaction loop
+                    #    burn through all its iterations trying to reclaim it. The front edge is
+                    #    only cleaned when a front trim actually occurred, so a legitimate leading
+                    #    page-break on a range starting at page 1 is kept.
                     if start_page > 1:
                         PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=True)
                     PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
 
-                    # 4. When trimming removes content BEFORE/AFTER the range, the boundary section breaks
+                    # 4. Guarantee the exact page count. The source-boundary cuts above
+                    #    should already hold it, but a razor-edge reflow (trailing empty
+                    #    paragraph pushed onto its own page) may need a compensating cut.
+                    PageExporterEngine._trim_tail_to_keep(word_app, doc, expected_keep)
+
+                    # 5. When trimming removes content BEFORE/AFTER the range, the boundary section breaks
                     #    are deleted too, so the kept sections may inherit an adjacent (wrong) section's
                     #    header/footer, page setup, and page-number scheme. Re-sync them against the
                     #    original source document so the exported range looks correct.
                     if end_page < total_pages or start_page > 1:
                         try:
-                            source_doc = word_app.Documents.Open(
-                                FileName=abs_source,
-                                ReadOnly=True,
-                                ConfirmConversions=False,
-                                AddToRecentFiles=False,
-                                Visible=False
-                            )
                             start_section_index = PageExporterEngine._section_containing_page(source_doc, start_page)
                             end_section_index = PageExporterEngine._section_containing_page(source_doc, end_page)
                             PageExporterEngine._restore_sections_from_source(
@@ -379,7 +468,7 @@ class PageExporterEngine:
                         except Exception as restore_err:
                             logger.warning(f"Could not restore headers/footers for trimmed range: {restore_err}")
 
-                    # 5. Restart page numbering from 1 on the trimmed document so PAGE/NUMPAGES
+                    # 6. Restart page numbering from 1 on the trimmed document so PAGE/NUMPAGES
                     #    fields show the range-relative numbers (e.g. "2 of 3") instead of the
                     #    source document's original page numbers. This must run AFTER the section
                     #    restore above, otherwise the earlier StartingNumber overwrites would win.
@@ -406,6 +495,10 @@ class PageExporterEngine:
                         pass
 
                     # 6. Save as output destination format
+                    #    Restoring the source headers/footers can re-paginate a
+                    #    razor-edge page count, so re-compact to the expected count
+                    #    after every layout-affecting step and right before saving.
+                    PageExporterEngine._compact_to_fit(word_app, doc, expected_keep)
                     doc.SaveAs2(FileName=abs_output, FileFormat=fmt_code)
                     logger.success(f"Exported pages [{start_page}-{end_page}] to '{abs_output}'")
 
@@ -452,91 +545,695 @@ class PageExporterEngine:
             logger.warning("Could not delete range during page trimming.")
 
     @staticmethod
-    def _trim_tail_to_keep(word_app, doc, expected_keep: int) -> None:
-        """Delete trailing content until the document holds exactly `expected_keep` pages.
+    def _page_start_by_position(doc, page: int) -> int:
+        """Find the body position where `page` starts.
 
-        Word re-paginates the document after every deletion (a blank page or empty
-        paragraph at a cut boundary can collapse and change the page count), so the
-        target is re-evaluated on each iteration instead of trusting a single
-        pre-computed boundary. This guarantees the kept count matches the requested
-        custom page range regardless of manual page breaks.
+        `GoTo(page)` returns Word's native page boundary, but inside tables the
+        returned position is unreliable in headless COM Word (it can land anywhere
+        in a multi-row region). Table-row start page numbers
+        (Range.Information(wdActiveEndPageNumber) on a row start) are reliable and
+        monotonic, so a boundary that falls inside a table is snapped to the first
+        row whose start is on `page`. As a last resort, fall back to a binary
+        search over Information(wdActiveEndPageNumber).
         """
-        guard = 0
-        while guard < 60:
-            current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
-            if current_pages <= expected_keep:
-                break
+        pos = None
+        try:
+            pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=page).Start
+        except Exception:
+            pass
+        if pos is None or not (doc.Content.Start <= pos <= doc.Content.End):
+            lo, hi = doc.Content.Start, doc.Content.End
+            while lo < hi:
+                mid = (lo + hi) // 2
+                try:
+                    pn = doc.Range(mid, min(mid + 1, hi)).Information(WD_ACTIVE_END_PAGE_NUMBER)
+                except Exception:
+                    pn = 1
+                if pn >= page:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            pos = lo
+        return PageExporterEngine._snap_table_boundary(doc, pos, page)
+
+    @staticmethod
+    def _snap_table_boundary(doc, pos: int, page: int) -> int:
+        """Snap `pos` to a table row start if it falls inside a table.
+
+        Raw GoTo/binary page boundaries inside tables are unreliable, but the page
+        number reported at a table row start is reliable and monotonic, so the
+        boundary becomes the first row whose start lies on `page`. This keeps the
+        export/verify boundaries deterministic for table-heavy documents.
+        """
+        if doc.Tables.Count == 0:
+            return pos
+        for table in doc.Tables:
+            if not (table.Range.Start <= pos <= table.Range.End):
+                continue
+            # Fast path: when the table has no vertically merged rows, Rows(i) is
+            # indexable and row-start page numbers are non-decreasing, so binary
+            # search finds the first row start on `page` in a handful of probes
+            # instead of scanning the whole table.
             try:
-                drop_start = doc.GoTo(
-                    What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=expected_keep + 1
-                ).Start
-                PageExporterEngine._delete_range(
-                    word_app, doc.Range(Start=drop_start, End=doc.Content.End)
-                )
+                count = table.Rows.Count
+                end = doc.Content.End
+                lo, hi = 1, count
+                ans = None
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    rs = table.Rows(mid).Range.Start
+                    pn = doc.Range(rs, min(rs + 1, end)).Information(WD_ACTIVE_END_PAGE_NUMBER)
+                    if pn >= page:
+                        ans = rs
+                        hi = mid - 1
+                    else:
+                        lo = mid + 1
+                if ans is not None:
+                    return ans
+            except Exception:
+                pass
+            layout, max_row = PageExporterEngine._table_row_layout(doc, table)
+            end = doc.Content.End
+            for ri in range(1, max_row + 1):
+                if ri not in layout:
+                    continue
+                rs, _re = layout[ri]
+                try:
+                    pn = doc.Range(rs, min(rs + 1, end)).Information(WD_ACTIVE_END_PAGE_NUMBER)
+                except Exception:
+                    continue
+                if pn >= page:
+                    return rs
+            return pos
+        return pos
+
+    @staticmethod
+    def _table_row_layout(doc, table):
+        """Return (row_start, row_end, max_row) for a table.
+
+        Word refuses `Rows(i)` access on vertically merged tables, so fall back to
+        iterating the cell collection (Cells/RowIndex still work on merged tables).
+        Returns dict row_index -> (start, end) plus the highest row index.
+        Results are cached per document/table; the key includes Rows.Count so a
+        row deletion invalidates the cache.
+        """
+        try:
+            count = table.Rows.Count
+            cache_key = (id(doc), table.Range.Start, table.Range.End, count)
+        except Exception:
+            cache_key = None
+        if cache_key is not None and cache_key in _TABLE_ROW_LAYOUT_CACHE:
+            return _TABLE_ROW_LAYOUT_CACHE[cache_key]
+        layout = None
+        if cache_key is not None:
+            try:
+                layout = {}
+                for i in range(1, count + 1):
+                    r = table.Rows(i)
+                    layout[i] = (r.Range.Start, r.Range.End)
+            except Exception:
+                layout = None
+        if layout is None:
+            layout = {}
+            max_row = 0
+            cells_count = table.Range.Cells.Count
+            for i in range(1, cells_count + 1):
+                try:
+                    cell = table.Range.Cells(i)
+                    ri = cell.RowIndex
+                    s = cell.Range.Start
+                    e = cell.Range.End
+                except Exception:
+                    continue
+                layout[ri] = (min(layout.get(ri, (s, e))[0], s), max(layout.get(ri, (s, s))[1], e))
+                max_row = max(max_row, ri)
+            count = max_row
+        if cache_key is not None:
+            _TABLE_ROW_LAYOUT_CACHE[cache_key] = (layout, count)
+        return layout, count
+
+    @staticmethod
+    def _row_containing(doc, table, pos: int) -> int:
+        """Return the 1-based index of the table row containing `pos`, or None."""
+        try:
+            count = table.Rows.Count
+            lo, hi = 1, count
+            best = None
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                rs = table.Rows(mid).Range.Start
+                if rs <= pos:
+                    best = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if best is not None:
+                row_end = table.Rows(best).Range.End
+                if row_end > pos:
+                    return best
+            return None
+        except Exception:
+            pass
+        layout, max_row = PageExporterEngine._table_row_layout(doc, table)
+        for ri in range(1, max_row + 1):
+            if ri not in layout:
+                continue
+            _, row_end = layout[ri]
+            if row_end > pos:
+                return ri
+        return None
+
+    @staticmethod
+    def _row_straddling(doc, table, pos: int) -> int:
+        """Return the row that strictly straddles `pos` (row_start < pos <= row_end).
+
+        A boundary that lands exactly on a row start belongs to the NEXT row, so it
+        does not straddle any row here; the caller keeps only rows entirely before it.
+        """
+        try:
+            count = table.Rows.Count
+            lo, hi = 1, count
+            best = None
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                rs = table.Rows(mid).Range.Start
+                if rs < pos:
+                    best = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if best is not None:
+                row_end = table.Rows(best).Range.End
+                if row_end >= pos:
+                    return best
+            return None
+        except Exception:
+            pass
+        layout, max_row = PageExporterEngine._table_row_layout(doc, table)
+        for ri in range(1, max_row + 1):
+            if ri not in layout:
+                continue
+            row_start, row_end = layout[ri]
+            if row_start < pos <= row_end:
+                return ri
+        return None
+
+    @staticmethod
+    def _row_cells(table, row_index: int):
+        """Return the cells of `row_index` as [(start, end, cell)] in document order.
+
+        Falls back to iterating the whole cell collection for vertically merged
+        tables where `Rows(i)` access is refused by Word.
+        """
+        cells = []
+        try:
+            count = table.Rows(row_index).Cells.Count
+            for c in range(1, count + 1):
+                cell = table.Rows(row_index).Cells(c)
+                cells.append((cell.Range.Start, cell.Range.End, cell))
+            return cells
+        except Exception:
+            pass
+        result = []
+        total = table.Range.Cells.Count
+        for i in range(1, total + 1):
+            try:
+                cell = table.Range.Cells(i)
+                if cell.RowIndex == row_index:
+                    result.append((cell.Range.Start, cell.Range.End, cell))
+            except Exception:
+                continue
+        result.sort(key=lambda x: x[0])
+        return result
+
+    @staticmethod
+    def _delete_cell(word_app, doc, cell, cs: int, ce: int) -> None:
+        """Delete a whole table cell (or its content as a fallback) robustly."""
+        try:
+            cell.Delete()
+            return
+        except Exception:
+            pass
+        try:
+            rng = cell.Range
+            if rng.End > rng.Start:
+                rng.Delete()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _delete_table_rows_before(word_app, doc, table, keep_from: int) -> None:
+        """Delete table rows 1..keep_from-1 (keep_from row is kept). Works on merged tables."""
+        if keep_from <= 1:
+            return
+        try:
+            keep_start = table.Rows(keep_from).Range.Start
+        except Exception:
+            layout, _ = PageExporterEngine._table_row_layout(doc, table)
+            keep_start = layout.get(keep_from, (None, None))[0]
+        if keep_start is None:
+            return
+        try:
+            rng = doc.Range(Start=table.Range.Start, End=keep_start)
+            rng.Select()
+            word_app.Selection.Rows.Delete()
+            return
+        except Exception:
+            pass
+        for row_index in range(keep_from - 1, 0, -1):
+            try:
+                table.Rows(row_index).Delete()
             except Exception:
                 break
-            guard += 1
 
-        # When the kept range ends with a table, Word leaves a trailing empty
-        # paragraph after the table. After the tail is deleted that paragraph can
-        # overflow onto an extra page (e.g. a requested single page becomes two).
-        # Word refuses to delete the document's final paragraph mark, so shrink the
-        # trailing empty paragraph and compact the last table row's spacing until the
-        # requested page count is reached.
+    @staticmethod
+    def _delete_table_rows_after(word_app, doc, table, keep_until: int) -> None:
+        """Delete table rows keep_until+1..Count (keep_until row is kept). Works on merged tables."""
+        try:
+            if keep_until >= table.Rows.Count:
+                return
+            next_start = table.Rows(keep_until + 1).Range.Start
+        except Exception:
+            layout, max_row = PageExporterEngine._table_row_layout(doc, table)
+            if keep_until >= max_row:
+                return
+            next_start = layout.get(keep_until + 1, (None, None))[0]
+        if next_start is None:
+            return
+        try:
+            rng = doc.Range(Start=next_start, End=table.Range.End)
+            rng.Select()
+            word_app.Selection.Rows.Delete()
+            return
+        except Exception:
+            pass
+        for row_index in range(max_row, keep_until, -1):
+            try:
+                table.Rows(row_index).Delete()
+            except Exception:
+                break
+
+    @staticmethod
+    def _trim_front_to_page(word_app, doc, start_page: int, start_pos: int = None) -> None:
+        """Delete everything before the start of `start_page`.
+
+        A Range.Delete() whose end falls inside a table removes the entire table,
+        so when the page boundary lands inside a table, delete only the content
+        before the table and the rows that end before the spanning row instead.
+        `start_pos` may be passed in explicitly (computed from the untouched source
+        document) to avoid re-pagination drift on the working copy.
+        """
+        if start_pos is None:
+            start_pos = PageExporterEngine._page_start_by_position(doc, start_page)
+        if start_pos <= doc.Content.Start:
+            return
+        if not doc.Range(start_pos, start_pos).Information(12):
+            PageExporterEngine._delete_range(
+                word_app, doc.Range(Start=doc.Content.Start, End=start_pos)
+            )
+            return
+        for table in doc.Tables:
+            if table.Range.Start <= start_pos <= table.Range.End:
+                keep_from = PageExporterEngine._row_containing(doc, table, start_pos)
+                if keep_from:
+                    # The page boundary falls inside the row: truncate it at the
+                    # boundary so the export holds exactly the visible page content.
+                    # A whole cell on the kept side is preserved; a cell on the
+                    # trimmed side is deleted entirely; the boundary cell is cut.
+                    row_cells = PageExporterEngine._row_cells(table, keep_from)
+                    boundary_idx = None
+                    for i, (cs, ce, _cell) in enumerate(row_cells):
+                        if ce > start_pos:
+                            boundary_idx = i
+                            break
+                    if boundary_idx is not None:
+                        cs, ce, boundary_cell = row_cells[boundary_idx]
+                        if cs < start_pos:
+                            # Delete the latest region first so earlier positions hold.
+                            PageExporterEngine._delete_range(
+                                word_app, doc.Range(Start=cs, End=start_pos)
+                            )
+                        for i in range(boundary_idx):
+                            ocs, oce, ocell = row_cells[i]
+                            PageExporterEngine._delete_cell(word_app, doc, ocell, ocs, oce)
+                if keep_from and keep_from > 1:
+                    # table.Range.Start stays stable when only its leading rows are
+                    # deleted, so capture it and delete rows 1..keep_from-1 first.
+                    table_start = table.Range.Start
+                    PageExporterEngine._delete_table_rows_before(
+                        word_app, doc, table, keep_from
+                    )
+                    if table_start > doc.Content.Start:
+                        PageExporterEngine._delete_range(
+                            word_app, doc.Range(Start=doc.Content.Start, End=table_start)
+                        )
+                elif table.Range.Start > doc.Content.Start:
+                    PageExporterEngine._delete_range(
+                        word_app, doc.Range(Start=doc.Content.Start, End=table.Range.Start)
+                    )
+                return
+        PageExporterEngine._delete_range(
+            word_app, doc.Range(Start=doc.Content.Start, End=start_pos)
+        )
+
+    @staticmethod
+    def _delete_range_after(word_app, doc, drop_start: int) -> None:
+        """Delete [drop_start, doc.Content.End] robustly.
+
+        A Range.Delete() starting inside a table removes the whole row (or more),
+        losing content that belongs to the kept range. When `drop_start` lands
+        inside a table, keep the row that spans the boundary and delete only the
+        rows after it plus everything after the table.
+        """
+        if drop_start >= doc.Content.End:
+            return
+        if not doc.Range(drop_start, drop_start).Information(12):
+            PageExporterEngine._delete_range(
+                word_app, doc.Range(Start=drop_start, End=doc.Content.End)
+            )
+            return
+        for table in doc.Tables:
+            if table.Range.Start <= drop_start <= table.Range.End:
+                keep_until = PageExporterEngine._row_straddling(doc, table, drop_start)
+                if keep_until is None:
+                    layout, _ = PageExporterEngine._table_row_layout(doc, table)
+                    keep_until = 0
+                    for ri in sorted(layout):
+                        if layout[ri][1] <= drop_start:
+                            keep_until = ri
+                table_end = table.Range.End
+                # Delete from the latest region backward so earlier positions stay
+                # valid: content after the table, rows after the spanning row,
+                # then truncate the boundary cell and drop the cells after it.
+                if table_end < doc.Content.End:
+                    PageExporterEngine._delete_range(
+                        word_app, doc.Range(Start=table_end, End=doc.Content.End)
+                    )
+                if keep_until > 0:
+                    PageExporterEngine._delete_table_rows_after(
+                        word_app, doc, table, keep_until
+                    )
+                else:
+                    PageExporterEngine._delete_table_rows_after(
+                        word_app, doc, table, 0
+                    )
+                if keep_until > 0:
+                    straddle = PageExporterEngine._row_straddling(doc, table, drop_start)
+                    if straddle is not None:
+                        row_cells = PageExporterEngine._row_cells(table, straddle)
+                        boundary_idx = None
+                        for i, (cs, ce, _cell) in enumerate(row_cells):
+                            if ce > drop_start:
+                                boundary_idx = i
+                                break
+                        if boundary_idx is not None:
+                            cs, ce, boundary_cell = row_cells[boundary_idx]
+                            if cs < drop_start and drop_start < ce - 1:
+                                PageExporterEngine._delete_range(
+                                    word_app, doc.Range(Start=drop_start, End=ce - 1)
+                                )
+                            for i in range(boundary_idx + 1, len(row_cells)):
+                                ocs, oce, ocell = row_cells[i]
+                                PageExporterEngine._delete_cell(
+                                    word_app, doc, ocell, ocs, oce
+                                )
+                return
+        PageExporterEngine._delete_range(
+            word_app, doc.Range(Start=drop_start, End=doc.Content.End)
+        )
+
+    @staticmethod
+    def _trim_tail_to_keep(word_app, doc, expected_keep: int) -> None:
+        """Ensure the document holds exactly `expected_keep` pages without deleting
+        real content.
+
+        The front/back cuts are already position-exact against the untouched source
+        boundaries, so the working copy holds exactly the requested page content.
+        Headless COM Word's in-session pagination (ComputeStatistics/Repaginate and
+        page number lookups) is unreliable for the trimmed copy and can report 3, 5
+        or 7 pages for identical content, so a pagination-driven tail deletion would
+        arbitrarily cut real content (e.g. dropping the last kept page). Only the
+        safe `_compact_to_fit` runs here: it never deletes content, only shrinks the
+        spacing of the trailing empty paragraph / last table row / header-footer so
+        a razor-edge overflow (a trailing empty paragraph pushed onto its own page)
+        settles back to the requested count.
+        """
+        PageExporterEngine._compact_to_fit(word_app, doc, expected_keep)
+
+    @staticmethod
+    def _page_count(doc) -> int:
+        """Return the current rendered page count of `doc`.
+
+        `doc.ComputeStatistics(wdStatisticPages)` is unreliable in headless COM
+        Word (it reported 3, 5 or 7 for identical content in the same session),
+        while `Range.Information(wdActiveEndPageNumber)` on the final character
+        reflects the true rendered last-page number and matches a fresh open of
+        the saved file. Fall back to ComputeStatistics only if the range lookup
+        fails (e.g. an empty document).
+        """
+        end = doc.Content.End
+        for start in (end - 1, end - 2):
+            if start < 0:
+                continue
+            try:
+                return doc.Range(start, start + 1).Information(WD_ACTIVE_END_PAGE_NUMBER)
+            except Exception:
+                continue
+        try:
+            return doc.ComputeStatistics(WD_STATISTIC_PAGES)
+        except Exception:
+            return 1
+
+    @staticmethod
+    def _compact_to_fit(word_app, doc, expected_keep: int) -> None:
+        """Shrink trailing whitespace so the document fits exactly `expected_keep`
+        pages. Never deletes content: it only reduces the size/spacing of the
+        trailing empty paragraph, the last table row's paragraphs, and the
+        header/footer paragraphs, so a razor-edge re-pagination (e.g. after
+        section headers/footers are restored and the real, taller header/footer
+        pushes the body over) settles back to the requested page count.
+        """
         guard = 0
+        distance_allowed = False
         while guard < 30:
-            current_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+            try:
+                doc.Repaginate()
+            except Exception:
+                pass
+            current_pages = PageExporterEngine._page_count(doc)
             if current_pages <= expected_keep:
                 break
             guard += 1
+            reduced = False
+            # 1. Compact trailing whitespace. A table that ends flush with the
+            #    bottom margin pushes the trailing empty paragraph(s) onto an extra
+            #    page; deleting a manual page break at the cut edge can also leave
+            #    several empty paragraphs at the end. Every trailing empty paragraph
+            #    is shrunk (size 1, zero spacing, no page-break-before), then the
+            #    last non-empty paragraph's spacing is compacted so the shrunk
+            #    paragraphs regain the few points they need to fit on the final page.
             try:
-                last_para = doc.Paragraphs(doc.Paragraphs.Count)
-                if last_para.Range.Text.strip("\r\x07"):
-                    break
-                # A table that ends flush with the bottom margin pushes the trailing
-                # empty paragraph onto an extra page. Shrinking that paragraph alone
-                # is not always enough, so compact the last table row's spacing too.
-                last_para.Range.Font.Size = 1
-                last_para.Range.ParagraphFormat.SpaceBefore = 0
-                last_para.Range.ParagraphFormat.SpaceAfter = 0
-                last_para.Range.ParagraphFormat.LineSpacingRule = 0
+                idx = doc.Paragraphs.Count
+                while idx >= 1:
+                    para = doc.Paragraphs(idx)
+                    text = para.Range.Text
+                    if text.strip("\r\x07"):
+                        # Last non-empty paragraph: reclaim its spacing.
+                        ppf = para.Range.ParagraphFormat
+                        for attr in ("SpaceBefore", "SpaceAfter"):
+                            try:
+                                if getattr(ppf, attr):
+                                    setattr(ppf, attr, 0)
+                                    reduced = True
+                            except Exception:
+                                pass
+                        try:
+                            if ppf.LineSpacingRule != 0:
+                                ppf.LineSpacingRule = 0
+                                reduced = True
+                        except Exception:
+                            pass
+                        try:
+                            if ppf.PageBreakBefore:
+                                ppf.PageBreakBefore = False
+                                reduced = True
+                        except Exception:
+                            pass
+                        break
+                    # Empty paragraph: shrink it away.
+                    try:
+                        if para.Range.Font.Size != 1:
+                            para.Range.Font.Size = 1
+                            reduced = True
+                    except Exception:
+                        pass
+                    pf = para.Range.ParagraphFormat
+                    for attr in ("SpaceBefore", "SpaceAfter"):
+                        try:
+                            if getattr(pf, attr):
+                                setattr(pf, attr, 0)
+                                reduced = True
+                        except Exception:
+                            pass
+                    try:
+                        if pf.LineSpacingRule != 0:
+                            pf.LineSpacingRule = 0
+                            reduced = True
+                    except Exception:
+                        pass
+                    try:
+                        if pf.PageBreakBefore:
+                            pf.PageBreakBefore = False
+                            reduced = True
+                    except Exception:
+                        pass
+                    idx -= 1
+                # The last table row's paragraphs are also compacted: a table that
+                # ends flush with the bottom margin pushes the trailing paragraph(s)
+                # onto an extra page.
                 try:
                     last_table = doc.Tables(doc.Tables.Count)
                     last_row = last_table.Rows(last_table.Rows.Count)
                     if not last_row.Range.Information(12):
                         raise RuntimeError("not a table row")
-                    for cell in last_row.Cells:
+                    for cell in last_row.Range.Cells:
                         for para in cell.Range.Paragraphs:
-                            para.Range.ParagraphFormat.SpaceBefore = 0
-                            para.Range.ParagraphFormat.SpaceAfter = 0
-                            para.Range.ParagraphFormat.LineSpacingRule = 0
+                            cpf = para.Range.ParagraphFormat
+                            for attr in ("SpaceBefore", "SpaceAfter"):
+                                try:
+                                    if getattr(cpf, attr):
+                                        setattr(cpf, attr, 0)
+                                        reduced = True
+                                except Exception:
+                                    pass
+                            try:
+                                if cpf.LineSpacingRule != 0:
+                                    cpf.LineSpacingRule = 0
+                                    reduced = True
+                            except Exception:
+                                pass
+                            try:
+                                if cpf.PageBreakBefore:
+                                    cpf.PageBreakBefore = False
+                                    reduced = True
+                            except Exception:
+                                pass
                 except Exception:
                     pass
             except Exception:
+                pass
+            # 2. Compact the header/footer paragraph spacing so the body regains the
+            #    couple of lines a razor-edge page needs. This only runs while the
+            #    document still overflows the expected page count, so ordinary
+            #    exports are never touched. The header/footer text is preserved.
+            #    Only if spacing alone cannot reclaim the page are the header/footer
+            #    distances reduced as a last resort.
+            if PageExporterEngine._compact_headers_footers(doc, reduce_distance=distance_allowed):
+                reduced = True
+            if not reduced:
+                if not distance_allowed:
+                    distance_allowed = True
+                    continue
                 break
-            guard += 1
+
+    @staticmethod
+    def _compact_headers_footers(doc, reduce_distance: bool = False) -> bool:
+        """Reduce header/footer paragraph spacing so the body gets a little more
+        room. Returns True if any spacing was reduced; never deletes header/footer
+        content. `reduce_distance` additionally shrinks the header/footer distances
+        and is only used as a last resort."""
+        reduced = False
+        for sec in doc.Sections:
+            for hf_coll in (sec.Headers, sec.Footers):
+                for hf_idx in (1, 2, 3):
+                    try:
+                        hf = hf_coll(hf_idx)
+                        for para in hf.Range.Paragraphs:
+                            pf = para.Range.ParagraphFormat
+                            try:
+                                if pf.SpaceBefore and pf.SpaceBefore > 0:
+                                    pf.SpaceBefore = 0
+                                    reduced = True
+                            except Exception:
+                                pass
+                            try:
+                                if pf.SpaceAfter and pf.SpaceAfter > 0:
+                                    pf.SpaceAfter = 0
+                                    reduced = True
+                            except Exception:
+                                pass
+                            try:
+                                if pf.PageBreakBefore:
+                                    pf.PageBreakBefore = False
+                                    reduced = True
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            if reduce_distance:
+                ps = sec.PageSetup
+                for attr in ("FooterDistance", "HeaderDistance"):
+                    try:
+                        if getattr(ps, attr) and getattr(ps, attr) > 0:
+                            setattr(ps, attr, 0)
+                            reduced = True
+                    except Exception:
+                        pass
+        return reduced
 
     @staticmethod
     def _clean_page_boundary(word_app, doc, front_of_doc: bool) -> None:
         """Remove a stray leading/trailing page-break or blank paragraph left at the
-        trimmed edge so the first and last pages of the result hold only real content."""
+        trimmed edge so the first and last pages of the result hold only real content.
+
+        When the front trim leaves a table as the first element, Word keeps an empty
+        paragraph before it. That paragraph consumes the first row's height on page
+        one (so 15 rows/page becomes 14/15/1 and the range gains a spurious page),
+        so leading paragraphs that contain only empty/break characters and sit before
+        the first table are removed as well.
+        """
         for _ in range(5):
             try:
                 if front_of_doc:
+                    if doc.Tables.Count:
+                        first_table_start = doc.Tables(1).Range.Start
+                        lead = doc.Range(
+                            Start=doc.Content.Start, End=first_table_start
+                        ).Text
+                        if lead and not lead.strip("\r\x07\x0c\f"):
+                            doc.Range(
+                                Start=doc.Content.Start, End=first_table_start
+                            ).Delete()
+                            continue
                     rng = doc.Range(
                         Start=doc.Content.Start,
                         End=min(doc.Content.Start + 2, doc.Content.End),
                     )
+                    if rng.End <= rng.Start:
+                        break
+                    if "\x0c" in rng.Text or "\f" in rng.Text:
+                        rng.Delete()
+                    else:
+                        break
                 else:
                     if doc.Content.End <= 2:
                         break
-                    rng = doc.Range(Start=doc.Content.End - 2, End=doc.Content.End)
-                if rng.End <= rng.Start:
-                    break
-                if "\x0c" in rng.Text or "\f" in rng.Text:
-                    rng.Delete()
-                else:
-                    break
+                    # A manual page break (form-feed) left at the trimmed tail pushes
+                    # a spurious empty last page even though all real content was cut
+                    # away. Scan the trailing paragraphs (the final empty paragraph
+                    # plus the one before it) for such a break and delete it. The
+                    # window is a few characters wider than the final paragraph mark
+                    # so a break in the second-to-last paragraph is also caught.
+                    tail_start = max(doc.Content.Start, doc.Content.End - 48)
+                    rng = doc.Range(Start=tail_start, End=doc.Content.End)
+                    idx = rng.Text.find("\x0c")
+                    if idx < 0:
+                        idx = rng.Text.find("\f")
+                    if idx < 0:
+                        break
+                    doc.Range(
+                        Start=tail_start + idx, End=tail_start + idx + 1
+                    ).Delete()
             except Exception:
                 break
 
@@ -574,7 +1271,7 @@ class PageExporterEngine:
     def _section_containing_page(doc, page: int) -> int:
         """Return the 1-indexed source section that contains the given page."""
         try:
-            pos = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=page).Start
+            pos = PageExporterEngine._page_start_by_position(doc, page)
             for i in range(1, doc.Sections.Count + 1):
                 r = doc.Sections(i).Range
                 if r.Start <= pos < r.End:
@@ -805,14 +1502,13 @@ class PageExporterEngine:
                 start_section_index = PageExporterEngine._section_containing_page(source_doc, start_page)
                 end_section_index = PageExporterEngine._section_containing_page(source_doc, end_page)
 
-                start_range = source_doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=start_page)
+                start_range_start = PageExporterEngine._page_start_by_position(source_doc, start_page)
                 if end_page == total_pages:
                     end_pos = source_doc.Content.End
                 else:
-                    next_page_range = source_doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=end_page + 1)
-                    end_pos = next_page_range.Start
+                    end_pos = PageExporterEngine._page_start_by_position(source_doc, end_page + 1)
 
-                extract_range = source_doc.Range(Start=start_range.Start, End=end_pos)
+                extract_range = source_doc.Range(Start=start_range_start, End=end_pos)
                 extract_range.Copy()
 
                 target_doc = word_app.Documents.Add()
