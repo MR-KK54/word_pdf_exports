@@ -20,6 +20,11 @@ try:
 except ImportError:
     docx = None
 
+try:
+    import aspose.words as aw  # type: ignore
+except ImportError:
+    aw = None
+
 from word_exporter_pro.utils.logger import get_logger
 
 logger = get_logger()
