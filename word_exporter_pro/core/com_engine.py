@@ -231,7 +231,8 @@ class PageExporterEngine:
         end_page: int,
         export_format: str = "docx",
         mode: str = "trimming",
-        visible: bool = False
+        visible: bool = False,
+        total_pages: int = 1
     ) -> str:
         """
         Exports a page range from source Word doc into output_file.
@@ -244,6 +245,7 @@ class PageExporterEngine:
             export_format: Output format ('docx', 'pdf', 'doc', 'rtf', 'docm').
             mode: Extraction method ('trimming', 'aspose', or 'selection').
             visible: Whether Word app runs visibly.
+            total_pages: Document total page count.
 
         Returns:
             Absolute path of created output file.
@@ -273,7 +275,7 @@ class PageExporterEngine:
                     "Please install aspose-words on this server."
                 )
             return PageExporterEngine._export_by_docx_fallback(
-                abs_source, abs_output, start_page, end_page, export_format
+                abs_source, abs_output, start_page, end_page, export_format, total_pages=total_pages
             )
 
         fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower())
@@ -332,7 +334,8 @@ class PageExporterEngine:
         abs_output: str,
         start_page: int,
         end_page: int,
-        export_format: str
+        export_format: str,
+        total_pages: int = 1
     ) -> str:
         """Non-Windows / Linux cloud server fallback engine using python-docx to trim pages."""
         if docx is None:
@@ -361,18 +364,17 @@ class PageExporterEngine:
                     has_explicit_breaks = True
                     current_page += 1
 
-            # 2. If no explicit breaks exist, divide content proportionally across estimated total pages
-            if not has_explicit_breaks:
-                total_chars = sum(len(c.text or '') for c in children if hasattr(c, 'text'))
-                estimated_pages = max(1, (total_chars // 1200) + 1)
-                
+            # 2. If explicit breaks matched or exceed total_pages, use explicit mapping.
+            # Otherwise, divide content proportionally across total_pages!
+            if not has_explicit_breaks or (current_page < total_pages):
+                target_pages = max(total_pages, current_page)
                 total_elems = len(children)
                 element_pages = []
                 for idx in range(total_elems):
-                    p_num = min(estimated_pages, int((idx / total_elems) * estimated_pages) + 1)
+                    p_num = min(target_pages, int((idx / total_elems) * target_pages) + 1)
                     element_pages.append(p_num)
 
-            # 3. Trim elements outside target page range
+            # 3. Trim elements outside target page range [start_page, end_page]
             elements_to_remove = []
             for child, elem_page in zip(children, element_pages):
                 if elem_page < start_page or elem_page > end_page:

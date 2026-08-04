@@ -158,7 +158,8 @@ class BatchProcessor:
                         end_page=clamped_end,
                         export_format=fmt,
                         mode=self.config.engine_mode,
-                        visible=self.config.visible
+                        visible=self.config.visible,
+                        total_pages=total_pages
                     )
                 success_count += 1
                 if on_file_created:
