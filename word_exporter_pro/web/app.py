@@ -119,6 +119,42 @@ def api_upload():
     return jsonify({"files": saved})
 
 
+@app.route("/api/clear-storage", methods=["POST"])
+def api_clear_storage():
+    """Deletes all uploaded documents stored in the server's temporary upload path."""
+    import shutil
+    reclaimed_bytes = 0
+    file_count = 0
+
+    if os.path.exists(UPLOAD_DIR):
+        for root, dirs, files in os.walk(UPLOAD_DIR):
+            for f in files:
+                fp = os.path.join(root, f)
+                try:
+                    reclaimed_bytes += os.path.getsize(fp)
+                    os.remove(fp)
+                    file_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not remove file '{fp}': {e}")
+        for item in os.listdir(UPLOAD_DIR):
+            ip = os.path.join(UPLOAD_DIR, item)
+            if os.path.isdir(ip):
+                try:
+                    shutil.rmtree(ip, ignore_errors=True)
+                except Exception:
+                    pass
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    reclaimed_mb = round(reclaimed_bytes / (1024 * 1024), 2)
+    logger.info(f"Server document storage cleared: {file_count} file(s), {reclaimed_mb} MB freed from '{UPLOAD_DIR}'")
+    return jsonify({
+        "message": "Server document storage cleared successfully.",
+        "file_count": file_count,
+        "reclaimed_bytes": reclaimed_bytes,
+        "reclaimed_mb": reclaimed_mb
+    })
+
+
 @app.route("/api/inspect", methods=["POST"])
 def api_inspect():
     data = request.get_json(silent=True) or {}
