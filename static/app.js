@@ -467,7 +467,7 @@ function saveAllFiles(job, single) {
 
 /* ---------------- Session reset ---------------- */
 
-function resetSession() {
+async function resetSession() {
   stopPolling();
   state.files = [];
   state.jobId = null;
@@ -479,7 +479,8 @@ function resetSession() {
   $("namingInput").value = "{original_name}_pages_{start_page}-{end_page}";
   $("formatSelect").value = "docx";
   $("engineSelect").value = "trimming";
-  $("overwriteCheck").checked = false;
+  if ($("overwriteCheck")) $("overwriteCheck").checked = true;
+  if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = true;
   $("visibleCheck").checked = false;
   $("outputDirInput").value = defaultOutputDir;
 
@@ -493,7 +494,13 @@ function resetSession() {
   $("startBtn").disabled = false;
   $("cancelBtn").disabled = true;
   schedulePreview();
-  appendLog("info", "Session cleared.");
+
+  try {
+    const res = await api("/api/clear-storage", { method: "POST" });
+    appendLog("info", `Session cleared: ${res.file_count} file(s) (${res.reclaimed_mb} MB) purged from server storage.`);
+  } catch (e) {
+    appendLog("info", "Session cleared.");
+  }
 
   // Reset server path tab inputs and state
   if ($("serverPathInput")) $("serverPathInput").value = "";
