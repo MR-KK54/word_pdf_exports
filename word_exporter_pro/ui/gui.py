@@ -249,7 +249,11 @@ class WordExporterApp(ctk.CTk):
         # Overwrite option
         self.overwrite_var = ctk.BooleanVar(value=False)
         overwrite_chk = ctk.CTkCheckBox(output_card, text="Overwrite existing files", variable=self.overwrite_var)
-        overwrite_chk.grid(row=6, column=1, padx=15, pady=(5, 12), sticky="w")
+        overwrite_chk.grid(row=6, column=1, padx=15, pady=(5, 2), sticky="w")
+
+        self.clear_storage_var = ctk.BooleanVar(value=False)
+        clear_storage_chk = ctk.CTkCheckBox(output_card, text="Auto-clear uploaded documents from server after export", variable=self.clear_storage_var)
+        clear_storage_chk.grid(row=7, column=1, padx=15, pady=(2, 12), sticky="w")
 
         # 4. Engine & Advanced Settings
         adv_card = ctk.CTkFrame(left_scroll)
@@ -500,7 +504,8 @@ class WordExporterApp(ctk.CTk):
             naming_pattern=self.naming_entry.get().strip(),
             overwrite=self.overwrite_var.get(),
             engine_mode=self.engine_var.get(),
-            visible=self.visible_var.get()
+            visible=self.visible_var.get(),
+            clear_storage_after_export=self.clear_storage_var.get()
         )
 
         self.start_btn.configure(state="disabled")

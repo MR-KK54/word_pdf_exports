@@ -278,6 +278,7 @@ def api_export():
         overwrite=bool(data.get("overwrite", False)),
         engine_mode=engine_mode,
         visible=bool(data.get("visible", False)),
+        clear_storage_after_export=bool(data.get("clear_storage_after_export", False)),
     )
 
     job = job_manager.create(config)

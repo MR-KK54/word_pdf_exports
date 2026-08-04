@@ -322,6 +322,7 @@ async function startExport() {
     output_dir: $("outputDirInput").value.trim(),
     naming_pattern: $("namingInput").value.trim(),
     overwrite: $("overwriteCheck").checked,
+    clear_storage_after_export: $("clearServerStorageCheck") ? $("clearServerStorageCheck").checked : false,
     engine_mode: $("engineSelect").value,
     visible: $("visibleCheck").checked,
   };

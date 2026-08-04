@@ -27,6 +27,7 @@ class ExportJobConfig:
     overwrite: bool = False
     engine_mode: str = "trimming"
     visible: bool = False
+    clear_storage_after_export: bool = False
 
 
 class BatchProcessor:
@@ -178,6 +179,16 @@ class BatchProcessor:
                     on_progress(task_idx, total_export_tasks, base_name, status_desc)
                 except Exception as e:
                     pass
+
+        # Auto-clear source files from server storage after export if requested
+        if self.config.clear_storage_after_export:
+            for sf in self.config.source_files:
+                try:
+                    if os.path.exists(sf) and os.path.isfile(sf):
+                        os.remove(sf)
+                        logger.info(f"Auto-cleared source document from server: {os.path.basename(sf)}")
+                except Exception as e:
+                    logger.warning(f"Could not auto-clear source file '{sf}': {e}")
 
         # Final reporting
         logger.info(f"Batch processing completed. Success: {success_count}, Failures: {fail_count}")
