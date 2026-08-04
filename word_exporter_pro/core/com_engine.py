@@ -261,11 +261,16 @@ class PageExporterEngine:
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
+            if aw is not None:
+                logger.info("Using Aspose.Words Layout Engine for Linux server page extraction.")
+                return PageExporterEngine._export_by_aspose(
+                    abs_source, abs_output, start_page, end_page, export_format
+                )
             if export_format.lower() == "pdf":
                 raise RuntimeError(
                     f"Unable to export Word document '{os.path.basename(source_file)}' to PDF format on this server. "
-                    "Microsoft Word is required for high-fidelity DOCX-to-PDF conversion. "
-                    "Please run this operation locally on a Windows machine with Microsoft Word installed."
+                    "Microsoft Word or Aspose.Words is required for high-fidelity DOCX-to-PDF conversion. "
+                    "Please install aspose-words on this server."
                 )
             return PageExporterEngine._export_by_docx_fallback(
                 abs_source, abs_output, start_page, end_page, export_format
@@ -338,23 +343,39 @@ class PageExporterEngine:
             doc = docx.Document(abs_source)
             body = doc._body._element
 
+            children = [child for child in list(body) if child.tag.rsplit('}', 1)[-1] in ('p', 'tbl')]
+            if not children:
+                doc.save(abs_output)
+                return abs_output
+
+            # 1. Check explicit page breaks (w:br[@w:type="page"], lastRenderedPageBreak, w:sectPr)
+            element_pages = []
             current_page = 1
-            elements_to_remove = []
+            has_explicit_breaks = False
 
-            for child in list(body):
-                tag = child.tag.rsplit('}', 1)[-1]
-                if tag not in ('p', 'tbl'):
-                    continue
-
+            for child in children:
                 xml = child.xml
-                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or ('w:br' in xml and 'page' in xml))
-
-                element_page = current_page
-
+                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or 'w:sectPr' in xml)
+                element_pages.append(current_page)
                 if has_break:
+                    has_explicit_breaks = True
                     current_page += 1
 
-                if element_page < start_page or element_page > end_page:
+            # 2. If no explicit breaks exist, divide content proportionally across estimated total pages
+            if not has_explicit_breaks:
+                total_chars = sum(len(c.text or '') for c in children if hasattr(c, 'text'))
+                estimated_pages = max(1, (total_chars // 1200) + 1)
+                
+                total_elems = len(children)
+                element_pages = []
+                for idx in range(total_elems):
+                    p_num = min(estimated_pages, int((idx / total_elems) * estimated_pages) + 1)
+                    element_pages.append(p_num)
+
+            # 3. Trim elements outside target page range
+            elements_to_remove = []
+            for child, elem_page in zip(children, element_pages):
+                if elem_page < start_page or elem_page > end_page:
                     elements_to_remove.append(child)
 
             if elements_to_remove:
