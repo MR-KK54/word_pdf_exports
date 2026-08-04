@@ -247,11 +247,11 @@ class WordExporterApp(ctk.CTk):
         self.preview_val_lbl.grid(row=5, column=1, padx=15, pady=5, sticky="w")
 
         # Overwrite option
-        self.overwrite_var = ctk.BooleanVar(value=False)
+        self.overwrite_var = ctk.BooleanVar(value=True)
         overwrite_chk = ctk.CTkCheckBox(output_card, text="Overwrite existing files", variable=self.overwrite_var)
         overwrite_chk.grid(row=6, column=1, padx=15, pady=(5, 2), sticky="w")
 
-        self.clear_storage_var = ctk.BooleanVar(value=False)
+        self.clear_storage_var = ctk.BooleanVar(value=True)
         clear_storage_chk = ctk.CTkCheckBox(output_card, text="Auto-clear uploaded documents from server after export", variable=self.clear_storage_var)
         clear_storage_chk.grid(row=7, column=1, padx=15, pady=(2, 12), sticky="w")
 
