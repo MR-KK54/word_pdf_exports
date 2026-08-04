@@ -225,7 +225,7 @@ def api_export():
         return jsonify({"error": f"Unsupported export format '{export_format}'."}), 400
 
     engine_mode = str(data.get("engine_mode", "trimming"))
-    if engine_mode not in ("trimming", "selection"):
+    if engine_mode not in ("trimming", "aspose", "selection"):
         engine_mode = "trimming"
 
     output_dir = str(data.get("output_dir", "")).strip() or DEFAULT_OUTPUT_DIR
