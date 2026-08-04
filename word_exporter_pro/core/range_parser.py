@@ -1,10 +1,10 @@
 """
 Word Page Exporter Pro - Page Range Parser
-Parses and validates page range specification strings into tuples of (start_page, end_page).
+Parses and validates page range specification strings into structured (start_page, end_page) tuples.
 """
 
 import re
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Set
 
 
 class RangeParseError(ValueError):
@@ -16,7 +16,12 @@ class PageRangeParser:
     """Parses user input range strings into structured (start_page, end_page) list."""
 
     @staticmethod
-    def parse(range_str: str, total_pages: int, clamp_to_total: bool = True) -> List[Tuple[int, int]]:
+    def parse(
+        range_str: str,
+        total_pages: int,
+        clamp_to_total: bool = True,
+        strict_validation: bool = False
+    ) -> List[Tuple[int, int]]:
         """
         Parses a page range specification string.
 
@@ -24,12 +29,13 @@ class PageRangeParser:
             range_str: E.g., "1-5", "1, 3, 5-8", "3-end", "even", "odd", "all", "all-individual"
             total_pages: Total number of pages in the document.
             clamp_to_total: Whether to clamp range values to total_pages.
+            strict_validation: If True, raises RangeParseError for out-of-bounds pages.
 
         Returns:
             List of (start_page, end_page) 1-indexed tuples.
 
         Raises:
-            RangeParseError: If syntax is invalid or out of bounds.
+            RangeParseError: If syntax is invalid, reverse range, or out of bounds.
         """
         if total_pages <= 0:
             raise RangeParseError(f"Invalid total page count: {total_pages}. Document must have at least 1 page.")
@@ -62,11 +68,13 @@ class PageRangeParser:
 
         # Normalize separators: replace semicolons and spaces with commas, and range connectors with hyphens
         normalized = cleaned.replace(";", ",")
-        # Replace range connectors " to ", " through ", ":" with "-"
         normalized = re.sub(r"\s+(?:to|through)\s+", "-", normalized)
         normalized = normalized.replace(":", "-")
 
         parts = [p.strip() for p in normalized.split(",") if p.strip()]
+        if not parts:
+            raise RangeParseError("Page range input cannot be empty.")
+
         result_ranges: List[Tuple[int, int]] = []
 
         for part in parts:
@@ -81,7 +89,7 @@ class PageRangeParser:
                 try:
                     start_page = int(raw_start)
                 except ValueError:
-                    raise RangeParseError(f"Invalid start page '{raw_start}' in segment '{part}'.")
+                    raise RangeParseError(f"Invalid start page '{raw_start}' in segment '{part}'. Must be a valid integer.")
 
                 # End page
                 if raw_end in ("end", "last"):
@@ -90,15 +98,21 @@ class PageRangeParser:
                     try:
                         end_page = int(raw_end)
                     except ValueError:
-                        raise RangeParseError(f"Invalid end page '{raw_end}' in segment '{part}'.")
+                        raise RangeParseError(f"Invalid end page '{raw_end}' in segment '{part}'. Must be a valid integer.")
+
+                # Check reverse ranges
+                if start_page > end_page:
+                    raise RangeParseError(f"Reverse range detected: start page {start_page} is greater than end page {end_page} in range '{part}'.")
+
+                if start_page < 1:
+                    raise RangeParseError(f"Invalid page number {start_page}. Page numbers must be 1 or greater.")
+
+                if strict_validation and end_page > total_pages:
+                    raise RangeParseError(f"Page number {end_page} exceeds total document length ({total_pages} page(s)).")
 
                 if clamp_to_total:
-                    # Clamp pages safely to [1, total_pages]
                     start_page = max(1, min(start_page, total_pages))
                     end_page = max(start_page, min(end_page, total_pages))
-                else:
-                    start_page = max(1, start_page)
-                    end_page = max(start_page, end_page)
 
                 result_ranges.append((start_page, end_page))
 
@@ -110,15 +124,33 @@ class PageRangeParser:
                     try:
                         page_num = int(part)
                     except ValueError:
-                        raise RangeParseError(f"Invalid page number or identifier '{part}'.")
+                        raise RangeParseError(f"Invalid page number or identifier '{part}'. Must be a valid integer.")
+
+                if page_num < 1:
+                    raise RangeParseError(f"Invalid page number {page_num}. Page numbers must be 1 or greater.")
+
+                if strict_validation and page_num > total_pages:
+                    raise RangeParseError(f"Page number {page_num} exceeds total document length ({total_pages} page(s)).")
 
                 if clamp_to_total:
                     page_num = max(1, min(page_num, total_pages))
-                else:
-                    page_num = max(1, page_num)
+
                 result_ranges.append((page_num, page_num))
 
         return result_ranges
+
+    @staticmethod
+    def detect_duplicates(ranges: List[Tuple[int, int]]) -> Set[int]:
+        """Detects duplicate individual pages across resolved ranges."""
+        seen: Set[int] = set()
+        duplicates: Set[int] = set()
+        for start, end in ranges:
+            for p in range(start, end + 1):
+                if p in seen:
+                    duplicates.add(p)
+                else:
+                    seen.add(p)
+        return duplicates
 
     @staticmethod
     def format_range_summary(ranges: List[Tuple[int, int]]) -> str:
