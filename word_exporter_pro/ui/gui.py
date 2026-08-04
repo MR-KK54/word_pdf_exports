@@ -12,6 +12,7 @@ import customtkinter as ctk
 from typing import List, Optional, Dict, Any
 
 from word_exporter_pro.core.com_engine import DocumentInspector
+from word_exporter_pro.core.pdf_engine import PdfInspector
 from word_exporter_pro.core.range_parser import PageRangeParser, RangeParseError
 from word_exporter_pro.core.naming_formatter import NamingFormatter
 from word_exporter_pro.core.batch_processor import BatchProcessor, ExportJobConfig
@@ -400,10 +401,12 @@ class WordExporterApp(ctk.CTk):
         self.files_box.delete("1.0", "end")
         if not self.source_files:
             self.files_box.insert("1.0", "No documents loaded. Click '+ Add Files' or '+ Add Folder' to begin.")
+            self.inspect_txt.configure(text="Select a document and click 'Inspect Doc' to detect page counts.")
         else:
             for idx, f in enumerate(self.source_files, 1):
                 sz = os.path.getsize(f) / 1024
                 self.files_box.insert("end", f"{idx:02d}. {os.path.basename(f)} ({sz:.1f} KB)\n")
+            self._inspect_selected(quiet=True)
         self.files_box.configure(state="disabled")
         self._update_preview()
 
@@ -456,23 +459,28 @@ class WordExporterApp(ctk.CTk):
         except Exception as e:
             self.preview_val_lbl.configure(text=f"[Pattern Error: {e}]", text_color="#E74C3C")
 
-    def _inspect_selected(self):
+    def _inspect_selected(self, quiet: bool = False):
         if not self.source_files:
-            messagebox.showwarning("No Selection", "Please add at least one Word document first.")
+            if not quiet:
+                messagebox.showwarning("No Selection", "Please add at least one Word document or PDF first.")
             return
 
         first_file = self.source_files[0]
-        self.inspect_txt.configure(text=f"Inspecting '{os.path.basename(first_file)}' via Word COM engine...")
+        self.inspect_txt.configure(text=f"Inspecting '{os.path.basename(first_file)}'...")
         
         # Async inspect
         import threading
         def worker():
             try:
-                info = DocumentInspector.get_info(first_file, visible=self.visible_var.get())
+                ext = os.path.splitext(first_file)[1].lower()
+                if ext == ".pdf":
+                    info = PdfInspector.get_info(first_file)
+                else:
+                    info = DocumentInspector.get_info(first_file, visible=self.visible_var.get())
                 text_res = (
                     f"📄 {info['filename']}\n"
-                    f"Total Pages (Word COM): {info['page_count']}\n"
-                    f"Sections: {info['section_count']} | Format: {info['format'].upper()}\n"
+                    f"Total Pages: {info['page_count']}\n"
+                    f"Sections: {info.get('section_count', 1)} | Format: {info['format'].upper()}\n"
                     f"Size: {info['size_bytes']/1024:.1f} KB"
                 )
                 self.ui_queue.put(("inspect_res", text_res))
