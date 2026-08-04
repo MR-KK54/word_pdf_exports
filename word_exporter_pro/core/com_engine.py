@@ -6,6 +6,7 @@ Provides high-fidelity page extraction and document pagination via Word.Applicat
 import os
 import shutil
 import tempfile
+import math
 from typing import Dict, Any, Optional, Tuple
 
 try:
@@ -174,8 +175,19 @@ class DocumentInspector:
                         pass
 
                     xml_str = d._body._element.xml
-                    page_breaks = xml_str.count('type="page"') + xml_str.count('w:lastRenderedPageBreak')
-                    info["page_count"] = max(1, page_breaks + 1 if page_breaks > 0 else 1)
+                    page_breaks = xml_str.count('type="page"') + xml_str.count('w:lastRenderedPageBreak') + xml_str.count('w:sectPr')
+                    if page_breaks > 0:
+                        info["page_count"] = max(1, page_breaks)
+                    else:
+                        total_text = "".join(p.text for p in d.paragraphs)
+                        num_paras = len(d.paragraphs)
+                        num_rows = sum(len(t.rows) for t in d.tables)
+                        char_count = len(total_text)
+
+                        char_pages = math.ceil(char_count / 2200) if char_count > 0 else 1
+                        elem_pages = math.ceil((num_paras + num_rows) / 15) if (num_paras + num_rows) > 0 else 1
+                        info["page_count"] = max(1, char_pages, elem_pages)
+
                     logger.info(f"Inspected '{info['filename']}' via server fallback: {info['page_count']} page(s)")
                     return info
                 except Exception as fallback_err:
