@@ -45,10 +45,12 @@ def test_all_individual_preset():
 
 
 def test_flexible_delimiters_and_connectors():
-    # Semicolons and 'to' / 'through' / ':' connectors
+    # Semicolons, periods, and 'to' / 'through' / ':' connectors
     assert PageRangeParser.parse("1-3; 5-7", total_pages=10) == [(1, 3), (5, 7)]
     assert PageRangeParser.parse("1 to 4, 6 through 8", total_pages=10) == [(1, 4), (6, 8)]
     assert PageRangeParser.parse("1:3, 5", total_pages=10) == [(1, 3), (5, 5)]
+    assert PageRangeParser.parse("1-3.4-5", total_pages=10) == [(1, 3), (4, 5)]
+    assert PageRangeParser.parse("1-3. 4-5", total_pages=10) == [(1, 3), (4, 5)]
 
 
 def test_range_clamping():

@@ -66,8 +66,9 @@ class PageRangeParser:
             odds = [p for p in range(1, total_pages + 1) if p % 2 != 0]
             return [(p, p) for p in odds]
 
-        # Normalize separators: replace semicolons and spaces with commas, and range connectors with hyphens
-        normalized = cleaned.replace(";", ",")
+        # Normalize separators: replace semicolons, periods, and separator spaces with commas, and range connectors with hyphens
+        normalized = cleaned.replace(";", ",").replace(".", ",")
+        normalized = re.sub(r"([\d\-end]+)\s+([\d\-end]+)", r"\1,\2", normalized)
         normalized = re.sub(r"\s+(?:to|through)\s+", "-", normalized)
         normalized = normalized.replace(":", "-")
 
