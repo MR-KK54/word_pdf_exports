@@ -363,27 +363,37 @@ class PageExporterEngine:
                 doc.save(abs_output)
                 return abs_output
 
-            # 1. Check explicit page breaks (w:br[@w:type="page"], lastRenderedPageBreak, w:sectPr)
+            # 1. Check explicit page breaks (w:br[@w:type="page"], lastRenderedPageBreak, page-break section breaks)
             element_pages = []
             current_page = 1
             has_explicit_breaks = False
 
             for child in children:
                 xml = child.xml
-                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or 'w:sectPr' in xml)
+                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or 'nextPage' in xml or 'oddPage' in xml or 'evenPage' in xml)
                 element_pages.append(current_page)
                 if has_break:
                     has_explicit_breaks = True
                     current_page += 1
 
             # 2. If explicit breaks matched or exceed total_pages, use explicit mapping.
-            # Otherwise, divide content proportionally across total_pages!
+            # Otherwise, divide content by text character density weight across total_pages!
             if not has_explicit_breaks or (current_page < total_pages):
-                target_pages = max(total_pages, current_page)
-                total_elems = len(children)
+                target_pages = max(total_pages, current_page, 1)
+                
+                elem_weights = []
+                for child in children:
+                    txt = "".join(child.itertext()) if hasattr(child, "itertext") else ""
+                    elem_weights.append(max(100, len(txt)))
+
+                total_weight = sum(elem_weights)
+                weight_per_page = total_weight / target_pages if total_weight > 0 else 1.0
+
                 element_pages = []
-                for idx in range(total_elems):
-                    p_num = min(target_pages, int((idx / total_elems) * target_pages) + 1)
+                accumulated_weight = 0
+                for w in elem_weights:
+                    accumulated_weight += w
+                    p_num = min(target_pages, int(accumulated_weight / weight_per_page) + 1)
                     element_pages.append(p_num)
 
             # 3. Trim elements outside target page range [start_page, end_page]
