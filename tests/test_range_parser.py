@@ -56,9 +56,6 @@ def test_range_clamping():
     ranges = PageRangeParser.parse("1-50", total_pages=10)
     assert ranges == [(1, 10)]
 
-    ranges = PageRangeParser.parse("0-5", total_pages=10)
-    assert ranges == [(1, 5)]
-
 
 def test_invalid_syntax_errors():
     with pytest.raises(RangeParseError):
@@ -66,6 +63,12 @@ def test_invalid_syntax_errors():
 
     with pytest.raises(RangeParseError):
         PageRangeParser.parse("abc", total_pages=10)
+
+    with pytest.raises(RangeParseError):
+        PageRangeParser.parse("0-5", total_pages=10)
+
+    with pytest.raises(RangeParseError):
+        PageRangeParser.parse("5-2", total_pages=10)
 
 
 def test_format_range_summary():
