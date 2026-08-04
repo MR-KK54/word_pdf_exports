@@ -211,6 +211,9 @@ class WordExporterApp(ctk.CTk):
         browse_btn = ctk.CTkButton(dest_frame, text="Browse...", width=80, command=self._browse_output_dir)
         browse_btn.grid(row=0, column=1)
 
+        clear_out_btn = ctk.CTkButton(dest_frame, text="Clear", width=60, fg_color="gray30", hover_color="gray40", command=self._clear_output_dir)
+        clear_out_btn.grid(row=0, column=2, padx=(5, 0))
+
         # Naming Pattern
         name_lbl = ctk.CTkLabel(output_card, text="Naming Template:")
         name_lbl.grid(row=3, column=0, padx=15, pady=5, sticky="w")
@@ -428,6 +431,9 @@ class WordExporterApp(ctk.CTk):
         if dir_path:
             self.dest_entry.delete(0, "end")
             self.dest_entry.insert(0, os.path.abspath(dir_path))
+
+    def _clear_output_dir(self):
+        self.dest_entry.delete(0, "end")
 
     def _update_preview(self, event=None):
         pattern = self.naming_entry.get().strip() or "{original_name}_pages_{start_page}-{end_page}"

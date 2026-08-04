@@ -596,6 +596,15 @@ document.addEventListener("keydown", (e) => {
 
 const defaultOutputDir = $("outputDirInput").value;
 
+const clearOutputDirBtn = $("clearOutputDirBtn");
+if (clearOutputDirBtn) {
+  clearOutputDirBtn.addEventListener("click", () => {
+    $("outputDirInput").value = "";
+    $("outputDirInput").focus();
+    updateNamingPreview();
+  });
+}
+
 setProgress(0, 0);
 updatePreviewNav();
 schedulePreview();

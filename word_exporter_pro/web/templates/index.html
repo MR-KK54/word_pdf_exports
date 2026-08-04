@@ -74,7 +74,10 @@
         <p class="muted hint">PDF input files are always exported as PDF.</p>
         <label class="field">
           <span>Output Directory (on server)</span>
-          <input type="text" id="outputDirInput" value="./exported_pages" placeholder="e.g. D:\exports\pages" />
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="outputDirInput" value="./exported_pages" placeholder="e.g. D:\exports\pages" style="flex: 1;" />
+            <button type="button" id="clearOutputDirBtn" class="btn secondary" style="padding: 6px 12px; font-size: 0.85rem;" title="Clear Output Directory">Clear</button>
+          </div>
         </label>
         <label class="field">
           <span>Naming Template</span>
