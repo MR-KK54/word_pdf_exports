@@ -9,7 +9,7 @@ from typing import Tuple
 
 import fitz  # PyMuPDF
 
-from word_exporter_pro.core.com_engine import WordCOMContext
+from word_exporter_pro.core.com_engine import WordCOMContext, aw
 from word_exporter_pro.utils.logger import get_logger
 
 logger = get_logger()
@@ -111,22 +111,27 @@ def _ensure_pdf(source_path: str) -> str:
             return preview_pdf
 
         logger.info(f"Generating preview PDF for '{os.path.basename(source_path)}'...")
-        with WordCOMContext(visible=False) as word_app:
-            doc = word_app.Documents.Open(
-                FileName=os.path.abspath(source_path),
-                ReadOnly=True,
-                ConfirmConversions=False,
-                AddToRecentFiles=False,
-            )
-            try:
-                doc.ExportAsFixedFormat(
-                    OutputFileName=os.path.abspath(preview_pdf),
-                    ExportFormat=WD_EXPORT_PDF,
+        if aw is not None:
+            # Aspose.Words works on Linux hosts; Word COM does not.
+            doc = aw.Document(os.path.abspath(source_path))
+            doc.save(os.path.abspath(preview_pdf))
+        else:
+            with WordCOMContext(visible=False) as word_app:
+                doc = word_app.Documents.Open(
+                    FileName=os.path.abspath(source_path),
+                    ReadOnly=True,
+                    ConfirmConversions=False,
+                    AddToRecentFiles=False,
                 )
-            finally:
                 try:
-                    doc.Close(SaveChanges=False)
-                except Exception:
-                    pass
+                    doc.ExportAsFixedFormat(
+                        OutputFileName=os.path.abspath(preview_pdf),
+                        ExportFormat=WD_EXPORT_PDF,
+                    )
+                finally:
+                    try:
+                        doc.Close(SaveChanges=False)
+                    except Exception:
+                        pass
 
     return preview_pdf

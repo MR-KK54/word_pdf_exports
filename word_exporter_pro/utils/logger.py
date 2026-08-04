@@ -6,6 +6,7 @@ Provides structured logging with console output, file logging, and GUI event lis
 import os
 import sys
 import logging
+import tempfile
 from datetime import datetime
 from typing import Callable, List, Optional
 
@@ -32,14 +33,22 @@ class AppLogger:
             # Optional file handler
             if log_to_file:
                 if not log_dir:
-                    log_dir = os.path.join(os.path.expanduser("~"), ".word_exporter_pro", "logs")
-                os.makedirs(log_dir, exist_ok=True)
-                log_file = os.path.join(log_dir, f"exporter_{datetime.now().strftime('%Y%m%d')}.log")
-                file_handler = logging.FileHandler(log_file, encoding="utf-8")
-                file_handler.setLevel(logging.DEBUG)
-                file_formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
-                file_handler.setFormatter(file_formatter)
-                self.logger.addHandler(file_handler)
+                    log_dir = os.getenv(
+                        "WORD_EXPORTER_LOG_DIR",
+                        os.path.join(tempfile.gettempdir(), "word_exporter_pro", "logs"),
+                    )
+                try:
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_file = os.path.join(log_dir, f"exporter_{datetime.now().strftime('%Y%m%d')}.log")
+                    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+                    file_handler.setLevel(logging.DEBUG)
+                    file_formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(name)s: %(message)s")
+                    file_handler.setFormatter(file_formatter)
+                    self.logger.addHandler(file_handler)
+                except OSError:
+                    # Container platforms still collect stdout; a file-log
+                    # permission problem must not prevent application startup.
+                    pass
 
     @classmethod
     def get_logger(cls) -> 'AppLogger':

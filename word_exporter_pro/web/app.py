@@ -25,14 +25,17 @@ from word_exporter_pro.utils.logger import get_logger
 logger = get_logger()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "word_exporter_pro_web", "uploads")
+WEB_DATA_DIR = os.getenv(
+    "WORD_EXPORTER_WEB_DATA_DIR",
+    os.path.join(tempfile.gettempdir(), "word_exporter_pro_web"),
+)
+UPLOAD_DIR = os.path.join(WEB_DATA_DIR, "uploads")
+OUTPUT_DIR = os.path.join(WEB_DATA_DIR, "outputs")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".docx", ".doc", ".docm", ".dotx", ".dotm", ".rtf", ".pdf"}
 ALLOWED_FORMATS = ["docx", "pdf", "doc", "rtf", "docm"]
-DEFAULT_OUTPUT_DIR = os.path.join(
-    os.path.expanduser("~"), "Documents", "WordPDF_Exports"
-)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
@@ -42,6 +45,14 @@ application = app
 
 def _is_allowed(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _job_file(job, filename: str) -> str:
+    """Resolve an output path while keeping it inside the job folder."""
+    filepath = os.path.abspath(os.path.join(job.output_dir, filename))
+    if os.path.commonpath((job.output_dir, filepath)) != job.output_dir:
+        raise FileNotFoundError(filename)
+    return filepath
 
 
 def _store_upload(file_storage) -> dict:
@@ -94,7 +105,6 @@ def index():
         is_windows_com = False
     return render_template(
         "index.html",
-        default_output_dir=DEFAULT_OUTPUT_DIR,
         is_windows_com=is_windows_com
     )
 
@@ -234,7 +244,10 @@ def api_output_preview(job_id, filename):
     job = job_manager.get(job_id)
     if not job:
         return jsonify({"error": "Job not found."}), 404
-    filepath = os.path.abspath(os.path.join(job.output_dir, filename))
+    try:
+        filepath = _job_file(job, filename)
+    except FileNotFoundError:
+        return jsonify({"error": "Output file not found."}), 404
     if not os.path.isfile(filepath):
         return jsonify({"error": f"Output file not found: {filename}"}), 404
     return _preview_response(filepath)
@@ -264,8 +277,9 @@ def api_export():
     if engine_mode not in ("trimming", "aspose", "selection"):
         engine_mode = "trimming"
 
-    output_dir = str(data.get("output_dir", "")).strip() or DEFAULT_OUTPUT_DIR
-    output_dir = os.path.abspath(output_dir)
+    # A remote browser cannot write to a local user folder.  Keep exports in
+    # a server-owned temporary folder and expose them through download routes.
+    output_dir = os.path.join(OUTPUT_DIR, uuid.uuid4().hex)
 
     naming_pattern = str(data.get("naming_pattern", "")).strip() or NamingFormatter.DEFAULT_PATTERN
 
@@ -309,7 +323,10 @@ def api_download(job_id, filename):
     job = job_manager.get(job_id)
     if not job:
         return jsonify({"error": "Job not found."}), 404
-    filepath = os.path.abspath(os.path.join(job.output_dir, filename))
+    try:
+        filepath = _job_file(job, filename)
+    except FileNotFoundError:
+        return jsonify({"error": "Output file not found."}), 404
     if not os.path.isfile(filepath):
         return jsonify({"error": f"Output file not found: {filename}"}), 404
     return send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
@@ -328,7 +345,10 @@ def api_download_zip(job_id):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in outputs:
-            filepath = os.path.abspath(os.path.join(job.output_dir, name))
+            try:
+                filepath = _job_file(job, name)
+            except FileNotFoundError:
+                continue
             if os.path.isfile(filepath):
                 zf.write(filepath, arcname=name)
     buf.seek(0)

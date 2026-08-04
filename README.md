@@ -104,13 +104,13 @@ Open `http://127.0.0.1:8000` in your browser. The web UI mirrors the desktop GUI
 1. **Upload** Word documents or PDFs via drag-and-drop or the file picker.
 2. Click **Inspect** to detect page counts (Word COM for `.doc*`/`.rtf`, PyMuPDF for `.pdf`).
 3. Choose a **Preset** or enter a **Range Spec** (e.g. `1-3, 5, 8-end`).
-4. Select the **Export Format**, **Output Directory**, and **Naming Template** (with live filename preview). PDF inputs always export as PDF.
+4. Select the **Export Format** and **Naming Template** (with live filename preview). PDF inputs always export as PDF.
 5. Click **START EXPORT** and watch the progress bar, live log console, and Save buttons for each produced file.
 
 Notes:
-- The server runs locally (binding `0.0.0.0`), reachable from other devices on the network, and must run on a Windows machine with Microsoft Word installed (Word COM is used for `.doc*`/`.rtf`). PDF files are processed without Word.
-- Uploaded files are stored in a temporary folder (`%TEMP%\word_exporter_pro_web\uploads`).
-- Output files are written to the output directory shown in the form (default `./web_exports`) and can be saved locally via the Results panel.
+- On Windows, Microsoft Word is used when available. On Linux hosts such as Render, Word documents are processed and previewed with Aspose.Words; PDF files are processed with PyMuPDF.
+- Uploaded files and exports are kept in a server-temporary directory and are downloaded with the Save buttons in the Results panel. The browser cannot write directly to a folder on the user's computer.
+- Hosted services have ephemeral storage: download exports before the service restarts. Set `WORD_EXPORTER_WEB_DATA_DIR` only when you provide persistent server storage.
 
 ---
 

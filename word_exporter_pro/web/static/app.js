@@ -323,7 +323,6 @@ async function startExport() {
     files: state.files.map((f) => f.name),
     range: $("rangeInput").value.trim(),
     format: $("formatSelect").value,
-    output_dir: $("outputDirInput").value.trim(),
     naming_pattern: $("namingInput").value.trim(),
     overwrite: $("overwriteCheck").checked,
     clear_storage_after_export: $("clearServerStorageCheck") ? $("clearServerStorageCheck").checked : false,
@@ -482,7 +481,6 @@ async function resetSession() {
   if ($("overwriteCheck")) $("overwriteCheck").checked = true;
   if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = true;
   $("visibleCheck").checked = false;
-  $("outputDirInput").value = defaultOutputDir;
 
   renderFiles();
   hidePreview();
@@ -602,16 +600,6 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight") $("modalNextBtn").click();
 });
 
-const defaultOutputDir = $("outputDirInput").value;
-
-const clearOutputDirBtn = $("clearOutputDirBtn");
-if (clearOutputDirBtn) {
-  clearOutputDirBtn.addEventListener("click", () => {
-    $("outputDirInput").value = "";
-    $("outputDirInput").focus();
-    updateNamingPreview();
-  });
-}
 
 setProgress(0, 0);
 updatePreviewNav();

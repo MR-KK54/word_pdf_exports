@@ -17,7 +17,7 @@
   <header class="header">
     <div class="header-text">
       <h1>Microsoft Word &amp; PDF Page Exporter Pro</h1>
-      <p>High-Fidelity Page Detection &amp; Range Extraction for Word Documents and PDFs &middot; MS Word COM + PyMuPDF</p>
+      <p>Page detection and range extraction for Word documents and PDFs</p>
     </div>
     <div class="header-actions">
       <button type="button" class="btn secondary" id="installPwaBtn" style="display: none; padding: 6px 12px; font-size: 0.85rem;" title="Install Application to device">📲 Install App</button>
@@ -74,13 +74,7 @@
           </select>
         </label>
         <p class="muted hint">PDF input files are always exported as PDF.</p>
-        <label class="field">
-          <span>Output Directory (on server)</span>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <input type="text" id="outputDirInput" value="./exported_pages" placeholder="e.g. D:\exports\pages" style="flex: 1;" />
-            <button type="button" id="clearOutputDirBtn" class="btn secondary" style="padding: 6px 12px; font-size: 0.85rem;" title="Clear Output Directory">Clear</button>
-          </div>
-        </label>
+        <p class="muted hint">Exports are prepared securely on the server, then saved to your device from the Results panel.</p>
         <label class="field">
           <span>Naming Template</span>
           <input type="text" id="namingInput" value="{original_name}_pages_{start_page}-{end_page}" />
@@ -112,7 +106,7 @@
           </select>
         </label>
         <label class="check">
-          <input type="checkbox" id="visibleCheck" /> Show MS Word window while running (debug)
+          <input type="checkbox" id="visibleCheck" /> Show MS Word window while running (local Windows only)
         </label>
       </div>
     </section>
