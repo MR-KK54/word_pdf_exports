@@ -601,6 +601,17 @@ if (clearOutputDirBtn) {
   });
 }
 
+const clearDocsBtn = $("clearDocsBtn");
+if (clearDocsBtn) {
+  clearDocsBtn.addEventListener("click", () => {
+    state.files = [];
+    renderFiles();
+    updatePreviewNav();
+    schedulePreview();
+    appendLog("info", "Cleared all uploaded document files.");
+  });
+}
+
 setProgress(0, 0);
 updatePreviewNav();
 schedulePreview();
