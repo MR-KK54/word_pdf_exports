@@ -67,6 +67,10 @@ async function uploadFiles(fileInputList) {
         state.files.push({ name: f.name, size: f.size, pages: null });
       }
     }
+    // Auto-select overwrite and auto-clear storage options on document upload
+    if ($("overwriteCheck")) $("overwriteCheck").checked = true;
+    if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = true;
+
     renderFiles();
     schedulePreview();
   } catch (e) {
@@ -613,6 +617,8 @@ if (clearDocsBtn) {
     renderFiles();
     updatePreviewNav();
     schedulePreview();
+    if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = false;
+    if ($("overwriteCheck")) $("overwriteCheck").checked = false;
     try {
       const res = await api("/api/clear-storage", { method: "POST" });
       appendLog("info", `Cleared server storage: ${res.file_count} file(s) (${res.reclaimed_mb} MB) deleted from server path.`);
