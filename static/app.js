@@ -660,3 +660,33 @@ if ($("addServerPathBtn")) {
     schedulePreview();
   });
 }
+
+/* ---------------- PWA Installation & Service Worker ---------------- */
+
+let deferredPrompt = null;
+const installPwaBtn = $("installPwaBtn");
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (installPwaBtn) installPwaBtn.style.display = "inline-block";
+});
+
+if (installPwaBtn) {
+  installPwaBtn.addEventListener("click", async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      appendLog("info", "App installation accepted by user.");
+    }
+    deferredPrompt = null;
+    installPwaBtn.style.display = "none";
+  });
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}

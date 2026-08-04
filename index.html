@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Word and PDF Page Exporter Pro</title>
   <link rel="stylesheet" href="static/style.css" />
+  <!-- PWA & Mobile Device Installation -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="static/icons/icon-192.png" />
 </head>
 <body>
   <header class="header">
@@ -13,6 +20,7 @@
       <p>High-Fidelity Page Detection &amp; Range Extraction for Word Documents and PDFs &middot; MS Word COM + PyMuPDF</p>
     </div>
     <div class="header-actions">
+      <button type="button" class="btn secondary" id="installPwaBtn" style="display: none; padding: 6px 12px; font-size: 0.85rem;" title="Install Application to device">📲 Install App</button>
       <button type="button" class="btn reset" id="resetBtn">Clear Session</button>
       <div class="server-badge">Live Web App</div>
     </div>
