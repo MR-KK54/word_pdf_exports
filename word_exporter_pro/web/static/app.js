@@ -613,24 +613,6 @@ if (clearOutputDirBtn) {
   });
 }
 
-const clearDocsBtn = $("clearDocsBtn");
-if (clearDocsBtn) {
-  clearDocsBtn.addEventListener("click", async () => {
-    state.files = [];
-    renderFiles();
-    updatePreviewNav();
-    schedulePreview();
-    if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = false;
-    if ($("overwriteCheck")) $("overwriteCheck").checked = false;
-    try {
-      const res = await api("/api/clear-storage", { method: "POST" });
-      appendLog("info", `Cleared server storage: ${res.file_count} file(s) (${res.reclaimed_mb} MB) deleted from server path.`);
-    } catch (e) {
-      appendLog("info", "Cleared all uploaded document files from UI.");
-    }
-  });
-}
-
 setProgress(0, 0);
 updatePreviewNav();
 schedulePreview();
