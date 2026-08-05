@@ -366,7 +366,9 @@ async function startExport() {
   $("startBtn").disabled = true;
   $("cancelBtn").disabled = false;
   setProgress(0, 0);
+  logConsole.innerHTML = "";
   appendLog("info", "Starting export job...");
+  state.lastLogCount = 1;
 
   try {
     const data = await api("/api/export", {
@@ -375,10 +377,10 @@ async function startExport() {
       body: JSON.stringify(body),
     });
     state.jobId = data.job_id;
-    state.lastLogCount = 0;
     startPolling();
   } catch (e) {
     setStatus("Error starting job: " + e.message, "error");
+    appendLog("error", "Error starting job: " + e.message);
     $("startBtn").disabled = false;
     $("cancelBtn").disabled = true;
   }
