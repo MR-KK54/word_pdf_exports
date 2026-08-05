@@ -297,34 +297,33 @@ class PageExporterEngine:
         end_page: int,
         export_format: str
     ) -> str:
-        """Aspose.Words Layout Engine: High-accuracy cross-platform page range extraction."""
-        if aw is None:
-            logger.warning("aspose-words module not installed. Falling back to standard engine.")
-            if pythoncom not in (None,) and win32com not in (None,):
-                fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower(), 16)
-                return PageExporterEngine._export_by_trimming(
-                    abs_source, abs_output, start_page, end_page, fmt_code, False
-                )
-            else:
-                return PageExporterEngine._export_by_docx_fallback(
-                    abs_source, abs_output, start_page, end_page, export_format
-                )
+        """Aspose.Words Layout Engine: High-accuracy cross-platform page range extraction with fail-safe fallback."""
+        if aw is not None:
+            try:
+                doc = aw.Document(abs_source)
+                total_pages = doc.page_count
+                start_clamped = max(1, min(start_page, total_pages))
+                end_clamped = max(start_clamped, min(end_page, total_pages))
+                count = end_clamped - start_clamped + 1
 
-        try:
-            doc = aw.Document(abs_source)
-            total_pages = doc.page_count
-            start_clamped = max(1, min(start_page, total_pages))
-            end_clamped = max(start_clamped, min(end_page, total_pages))
-            count = end_clamped - start_clamped + 1
+                # Extract exact page range using Aspose.Words Layout Engine
+                extracted_doc = doc.extract_pages(start_clamped - 1, count)
+                extracted_doc.save(abs_output)
+                logger.success(f"Exported pages [{start_page}-{end_page}] via Aspose.Words Layout Engine to '{abs_output}'")
+                return abs_output
+            except Exception as e:
+                logger.warning(f"Aspose.Words engine exception: {e}; falling back to ultra-fast native engine.")
 
-            # Extract exact page range using Aspose.Words Layout Engine
-            extracted_doc = doc.extract_pages(start_clamped - 1, count)
-            extracted_doc.save(abs_output)
-            logger.success(f"Exported pages [{start_page}-{end_page}] via Aspose.Words Layout Engine to '{abs_output}'")
-            return abs_output
-        except Exception as e:
-            logger.error(f"Aspose.Words Layout Engine error: {e}")
-            raise RuntimeError(f"Aspose.Words Layout Engine failed to process document: {e}")
+        # Fail-safe fallback: use MS Word COM on Windows, or fast python-docx trimming on Linux server
+        if pythoncom not in (None,) and win32com not in (None,):
+            fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower(), 16)
+            return PageExporterEngine._export_by_trimming(
+                abs_source, abs_output, start_page, end_page, fmt_code, False
+            )
+        else:
+            return PageExporterEngine._export_by_docx_fallback(
+                abs_source, abs_output, start_page, end_page, export_format
+            )
 
     @staticmethod
     def _export_by_docx_fallback(

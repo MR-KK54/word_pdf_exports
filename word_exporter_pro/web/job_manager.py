@@ -75,40 +75,43 @@ class JobManager:
             return self._jobs.get(job_id)
 
     def start(self, job: WebJob) -> None:
-        def on_progress(completed: int, total: int, filename: str, status: str):
-            with job._lock:
-                job.status = "running"
-                job.completed = completed
-                job.total = total
-                job.current_status = status
+        def _run_starter():
+            def on_progress(completed: int, total: int, filename: str, status: str):
+                with job._lock:
+                    job.status = "running"
+                    job.completed = completed
+                    job.total = total
+                    job.current_status = status
 
-        def on_finished(success: int, fail: int, errors: List[str]):
-            with job._lock:
-                job.success_count = success
-                job.fail_count = fail
-                job.errors.extend(errors)
-                job.completed = job.total
-                cancelled = job.processor is not None and job.processor.cancel_event.is_set()
-                job.status = "cancelled" if cancelled else "done"
-            get_logger().remove_listener(_listener)
+            def on_finished(success: int, fail: int, errors: List[str]):
+                with job._lock:
+                    job.success_count = success
+                    job.fail_count = fail
+                    job.errors.extend(errors)
+                    job.completed = job.total
+                    cancelled = job.processor is not None and job.processor.cancel_event.is_set()
+                    job.status = "cancelled" if cancelled else "done"
+                get_logger().remove_listener(_listener)
 
-        def _listener(timestamp: str, level: str, message: str):
-            with job._lock:
-                job.logs.append({"time": timestamp, "level": level, "message": message})
-                if len(job.logs) > MAX_LOG_LINES:
-                    job.logs = job.logs[-MAX_LOG_LINES:]
+            def _listener(timestamp: str, level: str, message: str):
+                with job._lock:
+                    job.logs.append({"time": timestamp, "level": level, "message": message})
+                    if len(job.logs) > MAX_LOG_LINES:
+                        job.logs = job.logs[-MAX_LOG_LINES:]
 
-        def on_file_created(path: str):
-            with job._lock:
-                name = os.path.basename(path)
-                if name not in job.outputs:
-                    job.outputs.append(name)
+            def on_file_created(path: str):
+                with job._lock:
+                    name = os.path.basename(path)
+                    if name not in job.outputs:
+                        job.outputs.append(name)
 
-        get_logger().add_listener(_listener)
-        processor = BatchProcessor(job.config)
-        with job._lock:
-            job.processor = processor
-        processor.start_async(on_progress, on_finished, on_file_created)
+            get_logger().add_listener(_listener)
+            processor = BatchProcessor(job.config)
+            with job._lock:
+                job.processor = processor
+            processor.start_async(on_progress, on_finished, on_file_created)
+
+        threading.Thread(target=_run_starter, daemon=True).start()
 
     def cancel(self, job: WebJob) -> None:
         with job._lock:
