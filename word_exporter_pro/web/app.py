@@ -210,15 +210,13 @@ def api_inspect():
             return jsonify({"status": "running"}), 202
         _inspection_jobs[key] = {"status": "running"}
 
-    result_queue = multiprocessing.Queue(maxsize=1)
-    process = multiprocessing.Process(
+    result_queue = queue.Queue(maxsize=1)
+    thread = threading.Thread(
         target=_inspect_document_process,
         args=(path, result_queue),
         daemon=True,
     )
-    process.start()
-    with _inspection_jobs_lock:
-        _inspection_jobs[key]["process"] = process
+    thread.start()
 
     def collect_result():
         try:
@@ -229,9 +227,6 @@ def api_inspect():
             logger.error(f"Background inspect result failed via web: {e}")
             with _inspection_jobs_lock:
                 _inspection_jobs[key] = {"status": "error", "error": str(e)}
-        finally:
-            process.join(timeout=1)
-            result_queue.close()
 
     threading.Thread(target=collect_result, daemon=True).start()
     return jsonify({"status": "running"}), 202
