@@ -425,7 +425,7 @@ function renderResults(job) {
   const saveAllBtn = document.createElement("button");
   saveAllBtn.type = "button";
   saveAllBtn.className = "btn save-all";
-  saveAllBtn.textContent = single ? "Save file" : "Save ZIP (" + job.outputs.length + " files)";
+  saveAllBtn.textContent = single ? "Save File" : "Save All Files (" + job.outputs.length + " files)";
   saveAllBtn.onclick = () => saveAllFiles(job, single);
   box.appendChild(saveAllBtn);
 
@@ -448,21 +448,16 @@ function renderResults(job) {
 }
 
 function saveAllFiles(job, single) {
-  if (single) {
-    const a = document.createElement("a");
-    a.href = "/api/download/" + job.job_id + "/" + encodeURIComponent(job.outputs[0]);
-    a.download = job.outputs[0];
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    return;
-  }
-  const a = document.createElement("a");
-  a.href = "/api/download/" + job.job_id + "/zip";
-  a.download = "word_pdf_exports_" + job.job_id + ".zip";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  job.outputs.forEach((name, i) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = "/api/download/" + job.job_id + "/" + encodeURIComponent(name);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, i * 250);
+  });
 }
 
 /* ---------------- Session reset ---------------- */
