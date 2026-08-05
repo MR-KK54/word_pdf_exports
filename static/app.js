@@ -352,8 +352,11 @@ async function startExport() {
   }
 }
 
+let pollRetries = 0;
+
 function startPolling() {
   stopPolling();
+  pollRetries = 0;
   state.pollTimer = setInterval(pollJob, 800);
 }
 
@@ -369,7 +372,12 @@ async function pollJob() {
   let job;
   try {
     job = await api("/api/job/" + state.jobId);
+    pollRetries = 0;
   } catch (e) {
+    pollRetries++;
+    if (pollRetries <= 4) {
+      return;
+    }
     stopPolling();
     setStatus("Job polling error: " + e.message, "error");
     $("startBtn").disabled = false;

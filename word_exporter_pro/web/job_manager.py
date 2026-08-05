@@ -1,9 +1,11 @@
 """
 Word Page Exporter Pro - Web Job Manager
-Tracks background batch export jobs and exposes live progress/log state to the web UI.
+Tracks background batch export jobs with disk-backed state persistence for multi-worker support.
 """
 
+import json
 import os
+import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -15,6 +17,28 @@ from word_exporter_pro.utils.logger import get_logger
 logger = get_logger()
 
 MAX_LOG_LINES = 500
+STATE_DIR = os.path.join(tempfile.gettempdir(), "word_exporter_pro_jobs")
+os.makedirs(STATE_DIR, exist_ok=True)
+
+
+def _save_job_disk(snap: dict):
+    try:
+        j_path = os.path.join(STATE_DIR, f"{snap['job_id']}.json")
+        with open(j_path, "w", encoding="utf-8") as f:
+            json.dump(snap, f)
+    except Exception as e:
+        logger.warning(f"Could not save job disk state for '{snap.get('job_id')}': {e}")
+
+
+def _load_job_disk(job_id: str) -> Optional[dict]:
+    try:
+        j_path = os.path.join(STATE_DIR, f"{job_id}.json")
+        if os.path.exists(j_path):
+            with open(j_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not read job disk state for '{job_id}': {e}")
+    return None
 
 
 @dataclass
@@ -54,7 +78,7 @@ class WebJob:
 
 
 class JobManager:
-    """Registry of running/completed web jobs."""
+    """Registry of running/completed web jobs with multi-worker disk persistence."""
 
     def __init__(self):
         self._jobs: Dict[str, WebJob] = {}
@@ -68,11 +92,35 @@ class JobManager:
         )
         with self._lock:
             self._jobs[job.job_id] = job
+        _save_job_disk(job.snapshot())
         return job
 
     def get(self, job_id: str) -> Optional[WebJob]:
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            if job:
+                return job
+
+        snap = _load_job_disk(job_id)
+        if snap:
+            fallback_job = WebJob(
+                job_id=snap["job_id"],
+                config=ExportJobConfig(source_files=[], range_expression="1-end", output_dir=snap.get("output_dir", "")),
+                status=snap.get("status", "done"),
+                completed=snap.get("completed", 0),
+                total=snap.get("total", 0),
+                current_status=snap.get("current_status", ""),
+                success_count=snap.get("success_count", 0),
+                fail_count=snap.get("fail_count", 0),
+                errors=snap.get("errors", []),
+                logs=snap.get("logs", []),
+                outputs=snap.get("outputs", []),
+                output_dir=snap.get("output_dir", ""),
+            )
+            with self._lock:
+                self._jobs[job_id] = fallback_job
+            return fallback_job
+        return None
 
     def start(self, job: WebJob) -> None:
         def _run_starter():
@@ -82,6 +130,7 @@ class JobManager:
                     job.completed = completed
                     job.total = total
                     job.current_status = status
+                    _save_job_disk(job.snapshot())
 
             def on_finished(success: int, fail: int, errors: List[str]):
                 with job._lock:
@@ -91,6 +140,7 @@ class JobManager:
                     job.completed = job.total
                     cancelled = job.processor is not None and job.processor.cancel_event.is_set()
                     job.status = "cancelled" if cancelled else "done"
+                    _save_job_disk(job.snapshot())
                 get_logger().remove_listener(_listener)
 
             def _listener(timestamp: str, level: str, message: str):
@@ -98,12 +148,14 @@ class JobManager:
                     job.logs.append({"time": timestamp, "level": level, "message": message})
                     if len(job.logs) > MAX_LOG_LINES:
                         job.logs = job.logs[-MAX_LOG_LINES:]
+                    _save_job_disk(job.snapshot())
 
             def on_file_created(path: str):
                 with job._lock:
                     name = os.path.basename(path)
                     if name not in job.outputs:
                         job.outputs.append(name)
+                        _save_job_disk(job.snapshot())
 
             get_logger().add_listener(_listener)
             processor = BatchProcessor(job.config)
@@ -117,5 +169,6 @@ class JobManager:
         with job._lock:
             if job.status in ("queued", "running"):
                 job.status = "cancelling"
+                _save_job_disk(job.snapshot())
         if job.processor:
             job.processor.cancel()
