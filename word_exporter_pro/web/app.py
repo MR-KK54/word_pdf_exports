@@ -7,6 +7,7 @@ Run with:
 """
 
 import io
+import multiprocessing
 import os
 import tempfile
 import threading
@@ -56,6 +57,18 @@ if aw is None:
     )
 else:
     logger.info("Aspose.Words is available for Linux Word-document pagination.")
+
+
+def _inspect_document_process(path: str, result_queue) -> None:
+    """Run CPU-intensive page layout outside the Gunicorn worker process."""
+    try:
+        if os.path.splitext(path)[1].lower() == ".pdf":
+            info = PdfInspector.get_info(path)
+        else:
+            info = DocumentInspector.get_info(path)
+        result_queue.put({"status": "done", "info": info})
+    except Exception as e:
+        result_queue.put({"status": "error", "error": str(e)})
 
 
 def _is_allowed(filename: str) -> bool:
@@ -197,20 +210,30 @@ def api_inspect():
             return jsonify({"status": "running"}), 202
         _inspection_jobs[key] = {"status": "running"}
 
-    def inspect_worker():
+    result_queue = multiprocessing.Queue(maxsize=1)
+    process = multiprocessing.Process(
+        target=_inspect_document_process,
+        args=(path, result_queue),
+        daemon=True,
+    )
+    process.start()
+    with _inspection_jobs_lock:
+        _inspection_jobs[key]["process"] = process
+
+    def collect_result():
         try:
-            if os.path.splitext(path)[1].lower() == ".pdf":
-                info = PdfInspector.get_info(path)
-            else:
-                info = DocumentInspector.get_info(path)
+            result = result_queue.get()
             with _inspection_jobs_lock:
-                _inspection_jobs[key] = {"status": "done", "info": info}
+                _inspection_jobs[key] = result
         except Exception as e:
-            logger.error(f"Inspect failed via web: {e}")
+            logger.error(f"Background inspect result failed via web: {e}")
             with _inspection_jobs_lock:
                 _inspection_jobs[key] = {"status": "error", "error": str(e)}
+        finally:
+            process.join(timeout=1)
+            result_queue.close()
 
-    threading.Thread(target=inspect_worker, daemon=True).start()
+    threading.Thread(target=collect_result, daemon=True).start()
     return jsonify({"status": "running"}), 202
 
 
