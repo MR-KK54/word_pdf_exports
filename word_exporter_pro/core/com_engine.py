@@ -309,22 +309,37 @@ class PageExporterEngine:
         end_page: int,
         export_format: str
     ) -> str:
-        """Aspose.Words Layout Engine: High-accuracy cross-platform page range extraction with fail-safe fallback."""
-        if aw is not None:
-            try:
-                doc = aw.Document(abs_source)
-                total_pages = doc.page_count
-                start_clamped = max(1, min(start_page, total_pages))
-                end_clamped = max(start_clamped, min(end_page, total_pages))
-                count = end_clamped - start_clamped + 1
+        """Aspose.Words Layout Engine: High-accuracy cross-platform page range extraction with process isolation."""
+        import sys
+        import subprocess
 
-                # Extract exact page range using Aspose.Words Layout Engine
-                extracted_doc = doc.extract_pages(start_clamped - 1, count)
-                extracted_doc.save(abs_output)
-                logger.success(f"Exported pages [{start_page}-{end_page}] via Aspose.Words Layout Engine to '{abs_output}'")
+        # Run Aspose.Words in an isolated subprocess to prevent C-level segfaults/OOMs from killing Gunicorn
+        cmd = [
+            sys.executable,
+            "-c",
+            "import sys, aspose.words as aw; "
+            "doc = aw.Document(sys.argv[1]); "
+            "tp = doc.page_count; "
+            "sc = max(1, min(int(sys.argv[3]), tp)); "
+            "ec = max(sc, min(int(sys.argv[4]), tp)); "
+            "cnt = ec - sc + 1; "
+            "ext = doc.extract_pages(sc - 1, cnt); "
+            "ext.save(sys.argv[2])",
+            abs_source,
+            abs_output,
+            str(start_page),
+            str(end_page),
+        ]
+
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+            if res.returncode == 0 and os.path.exists(abs_output) and os.path.getsize(abs_output) > 0:
+                logger.success(f"Exported pages [{start_page}-{end_page}] via isolated Aspose process to '{abs_output}'")
                 return abs_output
-            except Exception as e:
-                logger.warning(f"Aspose.Words engine exception: {e}; falling back to ultra-fast native engine.")
+            else:
+                logger.warning(f"Isolated Aspose process exited ({res.returncode}): {res.stderr}; falling back to ultra-fast native engine.")
+        except Exception as e:
+            logger.warning(f"Isolated Aspose process failed or timed out: {e}; falling back to ultra-fast native engine.")
 
         # Fail-safe fallback: use MS Word COM on Windows, or fast python-docx trimming on Linux server
         if pythoncom not in (None,) and win32com not in (None,):
@@ -333,8 +348,13 @@ class PageExporterEngine:
                 abs_source, abs_output, start_page, end_page, fmt_code, False
             )
         else:
+            try:
+                info = DocumentInspector.get_info(abs_source)
+                t_pages = info.get("page_count", 1)
+            except Exception:
+                t_pages = 1
             return PageExporterEngine._export_by_docx_fallback(
-                abs_source, abs_output, start_page, end_page, export_format
+                abs_source, abs_output, start_page, end_page, export_format, total_pages=t_pages
             )
 
     @staticmethod
