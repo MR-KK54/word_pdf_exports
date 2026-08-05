@@ -9,6 +9,7 @@ Run with:
 import io
 import os
 import tempfile
+import threading
 import uuid
 import zipfile
 
@@ -41,6 +42,12 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
 job_manager = JobManager()
 application = app
+
+# Large Word documents can take longer to paginate than a reverse proxy allows
+# for one HTTP request. Keep inspection work out of that request path and let
+# the browser poll a lightweight status endpoint instead.
+_inspection_jobs: dict[str, dict] = {}
+_inspection_jobs_lock = threading.Lock()
 
 if aw is None:
     logger.warning(
@@ -181,15 +188,48 @@ def api_inspect():
         path = _resolve_upload(name)
     except FileNotFoundError:
         return jsonify({"error": f"Uploaded file not found: {name}"}), 404
+    key = os.path.abspath(path)
+    with _inspection_jobs_lock:
+        existing = _inspection_jobs.get(key)
+        if existing and existing["status"] == "done":
+            return jsonify({"status": "done", "info": existing["info"]})
+        if existing and existing["status"] == "running":
+            return jsonify({"status": "running"}), 202
+        _inspection_jobs[key] = {"status": "running"}
+
+    def inspect_worker():
+        try:
+            if os.path.splitext(path)[1].lower() == ".pdf":
+                info = PdfInspector.get_info(path)
+            else:
+                info = DocumentInspector.get_info(path)
+            with _inspection_jobs_lock:
+                _inspection_jobs[key] = {"status": "done", "info": info}
+        except Exception as e:
+            logger.error(f"Inspect failed via web: {e}")
+            with _inspection_jobs_lock:
+                _inspection_jobs[key] = {"status": "error", "error": str(e)}
+
+    threading.Thread(target=inspect_worker, daemon=True).start()
+    return jsonify({"status": "running"}), 202
+
+
+@app.route("/api/inspect/<path:name>")
+def api_inspect_status(name):
+    """Return the state of a background document-inspection request."""
     try:
-        if os.path.splitext(path)[1].lower() == ".pdf":
-            info = PdfInspector.get_info(path)
-        else:
-            info = DocumentInspector.get_info(path)
-    except Exception as e:
-        logger.error(f"Inspect failed via web: {e}")
-        return jsonify({"error": str(e)}), 500
-    return jsonify(info)
+        path = _resolve_upload(name)
+    except FileNotFoundError:
+        return jsonify({"error": "Uploaded file not found."}), 404
+    with _inspection_jobs_lock:
+        result = _inspection_jobs.get(os.path.abspath(path))
+        if result is None:
+            return jsonify({"error": "Inspection has not been started."}), 404
+        if result["status"] == "done":
+            return jsonify({"status": "done", "info": result["info"]})
+        if result["status"] == "error":
+            return jsonify({"status": "error", "error": result["error"]}), 500
+    return jsonify({"status": "running"}), 202
 
 
 @app.route("/api/naming-preview", methods=["POST"])

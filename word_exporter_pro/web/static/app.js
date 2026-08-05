@@ -132,11 +132,22 @@ async function inspectFile(f, btn) {
   btn.disabled = true;
   btn.textContent = "…";
   try {
-    const info = await api("/api/inspect", {
+    const started = await api("/api/inspect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: f.name }),
     });
+    let inspection = started;
+    while (inspection.status === "running") {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const response = await fetch("/api/inspect/" + encodeURIComponent(f.name));
+      inspection = await response.json();
+      if (!response.ok) throw new Error(inspection.error || `Request failed (${response.status})`);
+    }
+    if (inspection.status !== "done" || !inspection.info) {
+      throw new Error(inspection.error || "Inspection did not complete.");
+    }
+    const info = inspection.info;
     f.pages = info.page_count;
     appendLog("success", `Inspected ${f.name}: ${info.page_count} page(s), ${info.section_count} section(s)`);
   } catch (e) {
