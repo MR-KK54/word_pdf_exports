@@ -1,0 +1,12 @@
+.git
+.venv
+venv
+ENV
+__pycache__
+.pytest_cache
+build
+dist
+Downloads
+exported_pages
+scratch*
+*.log

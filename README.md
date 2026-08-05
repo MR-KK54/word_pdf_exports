@@ -108,7 +108,8 @@ Open `http://127.0.0.1:8000` in your browser. The web UI mirrors the desktop GUI
 5. Click **START EXPORT** and watch the progress bar, live log console, and Save buttons for each produced file.
 
 Notes:
-- On Windows, Microsoft Word is used when available. On Linux hosts such as Render, Word documents are processed and previewed with Aspose.Words; PDF files are processed with PyMuPDF.
+- On Windows, Microsoft Word is used when available. On Render, Word documents are processed with Aspose.Words and the deployment image includes Calibri-compatible and Arial-compatible fonts. This is required for stable cloud page boundaries; exact parity with a desktop still requires the original document fonts to be installed or embedded. PDF files are processed with PyMuPDF.
+- Render deploys this project using the included `Dockerfile`. Do not switch the service to Render's native Python runtime, because it does not install the font packages used for Word pagination.
 - Uploaded files and exports are kept in a server-temporary directory and are downloaded with the Save buttons in the Results panel. The browser cannot write directly to a folder on the user's computer.
 - Hosted services have ephemeral storage: download exports before the service restarts. Set `WORD_EXPORTER_WEB_DATA_DIR` only when you provide persistent server storage.
 

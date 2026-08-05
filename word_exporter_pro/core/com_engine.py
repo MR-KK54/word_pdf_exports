@@ -6,7 +6,6 @@ Provides high-fidelity page extraction and document pagination via Word.Applicat
 import os
 import shutil
 import tempfile
-import math
 from typing import Dict, Any, Optional, Tuple
 
 try:
@@ -29,6 +28,22 @@ except ImportError:
 from word_exporter_pro.utils.logger import get_logger
 
 logger = get_logger()
+
+
+def _require_server_word_engine() -> None:
+    """Reject inaccurate XML-based pagination on non-Windows hosts.
+
+    ``python-docx`` reads document structure but does not lay a document out on
+    pages.  Using it to guess a page count makes an export look successful while
+    silently putting the wrong content in each output file.  Linux deployments
+    must therefore have Aspose.Words available for Word-document splitting.
+    """
+    if aw is None:
+        raise RuntimeError(
+            "This Linux server cannot accurately split Word documents because "
+            "Aspose.Words is unavailable. Ensure the Render build installs "
+            "aspose-words, then redeploy. PDF splitting is unaffected."
+        )
 
 
 # Table row layout cache, keyed by (id(doc), table.Range.Start, table.Range.End,
@@ -162,40 +177,10 @@ class DocumentInspector:
             except Exception as aspose_err:
                 logger.warning(f"Aspose.Words inspection warning: {aspose_err}")
 
-        # Server fallback for non-Windows / Linux server environments without win32com
+        # A DOCX is not a paginated format.  Do not use python-docx heuristics
+        # here: it cannot account for fonts, tables, headers, or printer layout.
         if pythoncom is None or win32com is None:
-            if docx is not None and info["format"] in ("docx", "docm", "dotx"):
-                try:
-                    d = docx.Document(abs_path)
-                    info["section_count"] = max(1, len(d.sections))
-                    try:
-                        info["title"] = str(d.core_properties.title or "")
-                        info["author"] = str(d.core_properties.author or "")
-                    except Exception:
-                        pass
-
-                    xml_str = d._body._element.xml
-                    page_breaks = xml_str.count('type="page"') + xml_str.count('w:lastRenderedPageBreak') + xml_str.count('w:sectPr')
-                    if page_breaks > 0:
-                        info["page_count"] = max(1, page_breaks)
-                    else:
-                        total_text = "".join(p.text for p in d.paragraphs)
-                        num_paras = len(d.paragraphs)
-                        num_rows = sum(len(t.rows) for t in d.tables)
-                        char_count = len(total_text)
-
-                        char_pages = math.ceil(char_count / 2200) if char_count > 0 else 1
-                        elem_pages = math.ceil((num_paras + num_rows) / 15) if (num_paras + num_rows) > 0 else 1
-                        info["page_count"] = max(1, char_pages, elem_pages)
-
-                    logger.info(f"Inspected '{info['filename']}' via server fallback: {info['page_count']} page(s)")
-                    return info
-                except Exception as fallback_err:
-                    logger.warning(f"Server fallback inspection warning: {fallback_err}")
-            
-            info["page_count"] = 1
-            info["section_count"] = 1
-            return info
+            _require_server_word_engine()
 
         with WordCOMContext(visible=visible) as word_app:
             doc = None
@@ -275,19 +260,10 @@ class PageExporterEngine:
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
-            if aw is not None:
-                logger.info("Using Aspose.Words Layout Engine for Linux server page extraction.")
-                return PageExporterEngine._export_by_aspose(
-                    abs_source, abs_output, start_page, end_page, export_format
-                )
-            if export_format.lower() == "pdf":
-                raise RuntimeError(
-                    f"Unable to export Word document '{os.path.basename(source_file)}' to PDF format on this server. "
-                    "Microsoft Word or Aspose.Words is required for high-fidelity DOCX-to-PDF conversion. "
-                    "Please install aspose-words on this server."
-                )
-            return PageExporterEngine._export_by_docx_fallback(
-                abs_source, abs_output, start_page, end_page, export_format, total_pages=total_pages
+            _require_server_word_engine()
+            logger.info("Using Aspose.Words Layout Engine for Linux server page extraction.")
+            return PageExporterEngine._export_by_aspose(
+                abs_source, abs_output, start_page, end_page, export_format
             )
 
         fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower())
