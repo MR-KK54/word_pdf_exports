@@ -5,5 +5,8 @@ pytest>=8.0.0
 flask>=3.0.0
 pymupdf>=1.24.0
 python-docx>=1.2.0
-aspose-words>=24.1.0; python_version < '3.14'
+# Required on Linux hosts (including Render) for real Word page layout.  Do not
+# add a Python-version marker here: a skipped install causes incorrect or failed
+# Word splitting at runtime.
+aspose-words>=24.1.0
 gunicorn>=23.0.0

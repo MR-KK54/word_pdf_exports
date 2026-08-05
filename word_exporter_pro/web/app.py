@@ -14,7 +14,7 @@ import zipfile
 
 from flask import Flask, jsonify, make_response, render_template, request, send_file
 
-from word_exporter_pro.core.com_engine import DocumentInspector
+from word_exporter_pro.core.com_engine import DocumentInspector, aw
 from word_exporter_pro.core.pdf_engine import PdfInspector
 from word_exporter_pro.core.preview import ensure_preview_async, render_page_preview
 from word_exporter_pro.core.batch_processor import ExportJobConfig
@@ -41,6 +41,14 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
 job_manager = JobManager()
 application = app
+
+if aw is None:
+    logger.warning(
+        "Aspose.Words is not available. Word-document exports will be rejected; "
+        "check the Render build log for the aspose-words installation."
+    )
+else:
+    logger.info("Aspose.Words is available for Linux Word-document pagination.")
 
 
 def _is_allowed(filename: str) -> bool:
