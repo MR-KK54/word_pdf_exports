@@ -270,10 +270,22 @@ class PageExporterEngine:
 
         # Non-Windows / Linux server fallback
         if pythoncom is None or win32com is None:
-            _require_server_word_engine()
-            logger.info("Using Aspose.Words Layout Engine for Linux server page extraction.")
-            return PageExporterEngine._export_by_aspose(
-                abs_source, abs_output, start_page, end_page, export_format
+            if aw is not None:
+                try:
+                    return PageExporterEngine._export_by_aspose(
+                        abs_source, abs_output, start_page, end_page, export_format
+                    )
+                except Exception as err:
+                    logger.warning(f"Aspose.Words server export failed ({err}); using fast docx fallback.")
+
+            try:
+                info = DocumentInspector.get_info(abs_source)
+                t_pages = info.get("page_count", 1)
+            except Exception:
+                t_pages = 1
+
+            return PageExporterEngine._export_by_docx_fallback(
+                abs_source, abs_output, start_page, end_page, export_format, total_pages=t_pages
             )
 
         fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower())
