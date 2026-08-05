@@ -85,12 +85,16 @@ def _job_file(job, filename: str) -> str:
 
 
 def _store_upload(file_storage) -> dict:
-    """Stores an uploaded file under its original name in a unique subfolder."""
+    """Stores an uploaded file under its original name in UPLOAD_DIR for instant lookup."""
     safe_name = os.path.basename(file_storage.filename)
     subdir = os.path.join(UPLOAD_DIR, uuid.uuid4().hex[:8])
     os.makedirs(subdir, exist_ok=True)
     dest = os.path.join(subdir, safe_name)
     file_storage.save(dest)
+    try:
+        shutil.copy2(dest, os.path.join(UPLOAD_DIR, safe_name))
+    except Exception:
+        pass
     return {"name": safe_name, "size": os.path.getsize(dest)}
 
 
