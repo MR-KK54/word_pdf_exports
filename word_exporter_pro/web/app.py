@@ -215,12 +215,12 @@ def _preview_response(path: str):
     except ValueError:
         width = 1000
     try:
-        data, total = render_page_preview(path, page=page, max_width=width)
+        data, total, mime_type = render_page_preview(path, page=page, max_width=width)
     except Exception as e:
         logger.error(f"Preview failed via web: {e}")
         return jsonify({"error": str(e)}), 500
     resp = make_response(data)
-    resp.headers["Content-Type"] = "image/png"
+    resp.headers["Content-Type"] = mime_type
     resp.headers["X-Total-Pages"] = str(total)
     return resp
 

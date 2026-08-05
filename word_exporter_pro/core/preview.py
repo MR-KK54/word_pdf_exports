@@ -23,7 +23,7 @@ _preview_lock = threading.Lock()
 
 def render_page_preview(
     source_path: str, page: int = 1, max_width: int = 1000
-) -> Tuple[bytes, int]:
+) -> Tuple[bytes, int, str]:
     """
     Renders a single page of a Word/PDF document to PNG bytes.
 
@@ -33,7 +33,7 @@ def render_page_preview(
         max_width: Approximate target width in pixels.
 
     Returns:
-        (png_bytes, total_page_count)
+        (image_bytes, total_page_count, MIME type)
     """
     src = _ensure_pdf(source_path)
     doc = fitz.open(src)
@@ -47,7 +47,10 @@ def render_page_preview(
         page_obj = doc.load_page(idx)
         zoom = max_width / page_obj.rect.width
         pix = page_obj.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        return pix.tobytes("png"), total
+        # JPEG is considerably smaller and faster to transfer/decode than PNG
+        # for a document-page preview, while the original exported document is
+        # never altered.
+        return pix.tobytes("jpeg", jpg_quality=82), total, "image/jpeg"
     finally:
         doc.close()
 

@@ -174,7 +174,7 @@ async function loadPreview() {
   if (!state.preview) return;
   previewBox.textContent = "Loading preview... (first Word preview may take a few seconds)";
   try {
-    const result = await fetchPreviewImage(state.preview.url, 1000);
+    const result = await fetchPreviewImage(state.preview.url, 760, "inline");
     if (!result) return;
     state.preview.total = result.total > 0 ? result.total : null;
     previewBox.classList.remove("muted");
@@ -187,6 +187,7 @@ async function loadPreview() {
     img.onclick = () => openModal();
     previewBox.appendChild(img);
     updatePreviewNav();
+    preloadNextPage();
   } catch (e) {
     previewBox.classList.add("muted");
     previewBox.textContent = "Preview error: " + e.message;
@@ -194,33 +195,53 @@ async function loadPreview() {
 }
 
 const previewCache = new Map();
-let previewAbort = null;
+const previewAborts = { inline: null, modal: null, preload: null };
 
-async function fetchPreviewImage(url, width, allowPoll = true, attempts = 180) {
-  const key = url + "@" + width + "@" + state.preview.page;
+async function fetchPreviewImage(url, width, consumer = "inline", allowPoll = true, attempts = 90, page = state.preview?.page, cacheWhenStale = false) {
+  if (!state.preview) return null;
+  const key = url + "@" + width + "@" + page;
   if (previewCache.has(key)) return previewCache.get(key);
 
-  if (previewAbort) previewAbort.abort();
+  if (previewAborts[consumer]) previewAborts[consumer].abort();
   const controller = new AbortController();
-  previewAbort = controller;
+  previewAborts[consumer] = controller;
   try {
-    let resp = await fetch(url + "?page=" + state.preview.page + "&w=" + width, { signal: controller.signal });
+    const resp = await fetch(url + "?page=" + page + "&w=" + width, { signal: controller.signal });
     if (resp.status === 202 && allowPoll) {
       if (attempts <= 0) throw new Error("Preview generation timed out");
-      await new Promise((r) => setTimeout(r, 1000));
-      return fetchPreviewImage(url, width, allowPoll, attempts - 1);
+      await new Promise((r) => setTimeout(r, 500));
+      return fetchPreviewImage(url, width, consumer, allowPoll, attempts - 1, page, cacheWhenStale);
     }
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const total = parseInt(resp.headers.get("X-Total-Pages") || "0", 10);
     const blob = await resp.blob();
     const urlObj = URL.createObjectURL(blob);
+    const isCurrent = state.preview && state.preview.url === url && state.preview.page === page;
+    if (!isCurrent && !cacheWhenStale) {
+      URL.revokeObjectURL(urlObj);
+      return null;
+    }
     previewCache.set(key, { urlObj, total });
-    if (previewCache.size > 60) previewCache.clear();
+    if (previewCache.size > 60) {
+      previewCache.forEach((entry) => URL.revokeObjectURL(entry.urlObj));
+      previewCache.clear();
+    }
     return { urlObj, total };
   } catch (e) {
     if (e.name === "AbortError") return null;
     throw e;
   }
+}
+
+function preloadNextPage() {
+  if (!state.preview || !state.preview.total || state.preview.page >= state.preview.total) return;
+  const nextPage = state.preview.page + 1;
+  const currentPage = state.preview.page;
+  const currentUrl = state.preview.url;
+  window.setTimeout(() => {
+    if (!state.preview || state.preview.url !== currentUrl || state.preview.page !== currentPage) return;
+    fetchPreviewImage(currentUrl, 760, "preload", true, 90, nextPage, true).catch(() => {});
+  }, 150);
 }
 
 function updatePreviewNav() {
@@ -265,7 +286,7 @@ function updateModalNav() {
 async function loadModalImage() {
   if (!state.preview) return;
   try {
-    const result = await fetchPreviewImage(state.preview.url, 1600);
+    const result = await fetchPreviewImage(state.preview.url, 1400, "modal");
     if (!result) return;
     state.preview.total = result.total > 0 ? result.total : null;
     modalImg.src = result.urlObj;
@@ -280,10 +301,11 @@ function gotoPage(page) {
   if (page < 1) page = 1;
   if (state.preview.total && page > state.preview.total) page = state.preview.total;
   state.preview.page = page;
-  loadPreview();
   if (!previewModal.classList.contains("hidden")) {
     updateModalNav();
     loadModalImage();
+  } else {
+    loadPreview();
   }
   $("gotoPageInput").value = "";
   $("modalGotoPageInput").value = "";
@@ -556,15 +578,15 @@ $("closePreviewBtn").addEventListener("click", hidePreview);
 $("prevPageBtn").addEventListener("click", () => {
   if (state.preview && state.preview.page > 1) {
     state.preview.page -= 1;
-    loadPreview();
     if (!previewModal.classList.contains("hidden")) loadModalImage();
+    else loadPreview();
   }
 });
 $("nextPageBtn").addEventListener("click", () => {
   if (state.preview && (!state.preview.total || state.preview.page < state.preview.total)) {
     state.preview.page += 1;
-    loadPreview();
     if (!previewModal.classList.contains("hidden")) loadModalImage();
+    else loadPreview();
   }
 });
 $("modalPrevBtn").addEventListener("click", () => {
