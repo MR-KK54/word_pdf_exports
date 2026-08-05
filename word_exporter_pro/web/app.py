@@ -322,50 +322,54 @@ def api_output_preview(job_id, filename):
 
 @app.route("/api/export", methods=["POST"])
 def api_export():
-    data = request.get_json(silent=True) or {}
-    names = data.get("files", [])
-    if not names:
-        return jsonify({"error": "No files selected for export."}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        names = data.get("files", [])
+        if not names:
+            return jsonify({"error": "No files selected for export. Please upload or select a document first."}), 400
 
-    paths = []
-    for n in names:
-        try:
-            paths.append(_resolve_upload(str(n)))
-        except FileNotFoundError:
-            continue
-    if not paths:
-        return jsonify({"error": "None of the selected files exist on the server."}), 400
+        paths = []
+        for n in names:
+            try:
+                paths.append(_resolve_upload(str(n)))
+            except FileNotFoundError:
+                continue
+        if not paths:
+            return jsonify({"error": "Selected document(s) were not found on the server. Please re-upload your document."}), 400
 
-    export_format = str(data.get("format", "docx")).lower()
-    if export_format not in ALLOWED_FORMATS:
-        return jsonify({"error": f"Unsupported export format '{export_format}'."}), 400
+        export_format = str(data.get("format", "docx")).lower()
+        if export_format not in ALLOWED_FORMATS:
+            return jsonify({"error": f"Unsupported export format '{export_format}'."}), 400
 
-    engine_mode = str(data.get("engine_mode", "trimming"))
-    if engine_mode not in ("trimming", "aspose", "selection"):
-        engine_mode = "trimming"
+        engine_mode = str(data.get("engine_mode", "trimming"))
+        if engine_mode not in ("trimming", "aspose", "selection"):
+            engine_mode = "trimming"
 
-    # A remote browser cannot write to a local user folder.  Keep exports in
-    # a server-owned temporary folder and expose them through download routes.
-    output_dir = os.path.join(OUTPUT_DIR, uuid.uuid4().hex)
+        # A remote browser cannot write to a local user folder. Keep exports in
+        # a server-owned temporary folder and expose them through download routes.
+        output_dir = os.path.join(OUTPUT_DIR, uuid.uuid4().hex)
 
-    naming_pattern = str(data.get("naming_pattern", "")).strip() or NamingFormatter.DEFAULT_PATTERN
+        naming_pattern = str(data.get("naming_pattern", "")).strip() or NamingFormatter.DEFAULT_PATTERN
 
-    config = ExportJobConfig(
-        source_files=paths,
-        range_expression=str(data.get("range", "1-end")),
-        output_dir=output_dir,
-        export_format=export_format,
-        naming_pattern=naming_pattern,
-        overwrite=bool(data.get("overwrite", False)),
-        engine_mode=engine_mode,
-        visible=bool(data.get("visible", False)),
-        clear_storage_after_export=bool(data.get("clear_storage_after_export", False)),
-    )
+        config = ExportJobConfig(
+            source_files=paths,
+            range_expression=str(data.get("range", "1-end")),
+            output_dir=output_dir,
+            export_format=export_format,
+            naming_pattern=naming_pattern,
+            overwrite=bool(data.get("overwrite", False)),
+            engine_mode=engine_mode,
+            visible=bool(data.get("visible", False)),
+            clear_storage_after_export=bool(data.get("clear_storage_after_export", False)),
+        )
 
-    job = job_manager.create(config)
-    job_manager.start(job)
-    logger.info(f"Web export job started: {job.job_id} ({len(paths)} file(s))")
-    return jsonify({"job_id": job.job_id}), 202
+        job = job_manager.create(config)
+        job_manager.start(job)
+        logger.info(f"Web export job started: {job.job_id} ({len(paths)} file(s))")
+        return jsonify({"job_id": job.job_id}), 202
+    except Exception as e:
+        logger.error(f"Error in api_export: {e}")
+        return jsonify({"error": f"Export initialization failed: {e}"}), 500
 
 
 @app.route("/api/job/<job_id>")
