@@ -278,11 +278,13 @@ class PageExporterEngine:
                 except Exception as err:
                     logger.warning(f"Aspose.Words server export failed ({err}); using fast docx fallback.")
 
-            try:
-                info = DocumentInspector.get_info(abs_source)
-                t_pages = info.get("page_count", 1)
-            except Exception:
-                t_pages = 1
+            t_pages = total_pages
+            if t_pages <= 1:
+                try:
+                    info = DocumentInspector.get_info(abs_source)
+                    t_pages = info.get("page_count", 1)
+                except Exception:
+                    t_pages = 1
 
             return PageExporterEngine._export_by_docx_fallback(
                 abs_source, abs_output, start_page, end_page, export_format, total_pages=t_pages
