@@ -165,9 +165,9 @@ class DocumentInspector:
         }
 
         # 1. Prefer Word COM on Windows host first if available
-        word_ctx = WordCOMContext(visible=visible)
-        if word_ctx.available:
+        if pythoncom is not None and win32com is not None:
             try:
+                word_ctx = WordCOMContext(visible=visible)
                 with word_ctx as word_app:
                     doc = word_app.Documents.Open(
                         FileName=abs_path,
