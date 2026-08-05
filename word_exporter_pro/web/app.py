@@ -9,6 +9,7 @@ Run with:
 import io
 import multiprocessing
 import os
+import queue
 import tempfile
 import threading
 import uuid
