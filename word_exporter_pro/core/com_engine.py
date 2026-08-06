@@ -411,8 +411,10 @@ class PageExporterEngine:
                 element_pages = []
                 accumulated_weight = 0
                 for w in elem_weights:
+                    prev_weight = accumulated_weight
                     accumulated_weight += w
-                    p_num = min(target_pages, int(accumulated_weight / weight_per_page) + 1)
+                    mid_weight = (prev_weight + accumulated_weight) / 2.0
+                    p_num = min(target_pages, max(1, int(mid_weight / weight_per_page) + 1))
                     element_pages.append(p_num)
 
             # 3. Trim elements outside target page range [start_page, end_page]

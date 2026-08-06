@@ -17,10 +17,9 @@
   <header class="header">
     <div class="header-text">
       <h1>Microsoft Word &amp; PDF Page Exporter Pro</h1>
-      <p>Page detection and range extraction for Word documents and PDFs</p>
+      <p>High-Fidelity Page Detection &amp; Range Extraction for Word Documents and PDFs &middot; MS Word COM + PyMuPDF</p>
     </div>
     <div class="header-actions">
-      <button type="button" class="btn secondary" id="installPwaBtn" style="display: none; padding: 6px 12px; font-size: 0.85rem;" title="Install Application to device">📲 Install App</button>
       <button type="button" class="btn reset" id="resetBtn">Clear Session</button>
       <div class="server-badge">Live Web App</div>
     </div>
@@ -30,13 +29,31 @@
     <section class="left">
       <div class="card card-active" id="step1">
         <h2>1. Select Documents</h2>
+        
+        <!-- Tab buttons to switch between Upload and Server Path -->
+        <div class="tab-container" style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <button type="button" class="btn" id="tabUpload" style="flex: 1; background: var(--accent); color: var(--text); font-weight: 600; padding: 8px 12px; font-size: 0.85rem;">Upload Files</button>
+          <button type="button" class="btn" id="tabServerPath" style="flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-weight: 600; padding: 8px 12px; font-size: 0.85rem;">Server File Path</button>
+        </div>
 
+        <!-- Tab 1: Upload (default) -->
         <div id="uploadContainer">
           <div class="dropzone" id="dropzone">
             <p>Drag & drop Word (.docx) or PDF files here, or click to upload</p>
             <button type="button" class="btn" id="pickFilesBtn">+ Add Files</button>
             <input type="file" id="fileInput" multiple accept=".docx,.doc,.docm,.dotx,.dotm,.rtf,.pdf" hidden />
           </div>
+        </div>
+
+        <!-- Tab 2: Server Path -->
+        <div id="serverPathContainer" style="display: none; padding: 12px; background: rgba(255,255,255,0.02); border: 1px dashed var(--border); border-radius: 6px; margin-bottom: 12px;">
+          <label class="field" style="margin: 0;">
+            <span style="font-weight: 500; font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text);">Absolute File Path on Server</span>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="serverPathInput" placeholder="e.g. C:\Users\Hxtreme\Downloads\document.docx" style="flex: 1; font-family: inherit; font-size: 0.9rem; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 4px;" />
+              <button type="button" class="btn" id="addServerPathBtn" style="padding: 0 16px; font-weight: 600; font-size: 0.85rem; background: var(--accent); color: var(--text); border: none; border-radius: 4px; cursor: pointer;">Add Path</button>
+            </div>
+          </label>
         </div>
 
         <ul id="fileList" class="file-list"></ul>
@@ -74,7 +91,13 @@
           </select>
         </label>
         <p class="muted hint">PDF input files are always exported as PDF.</p>
-        <p class="muted hint">Exports are prepared securely on the server, then saved to your device from the Results panel.</p>
+        <label class="field">
+          <span>Output Directory (on server)</span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="outputDirInput" value="./exported_pages" placeholder="e.g. D:\exports\pages" style="flex: 1;" />
+            <button type="button" id="clearOutputDirBtn" class="btn secondary" style="padding: 6px 12px; font-size: 0.85rem;" title="Clear Output Directory">Clear</button>
+          </div>
+        </label>
         <label class="field">
           <span>Naming Template</span>
           <input type="text" id="namingInput" value="{original_name}_pages_{start_page}-{end_page}" />
@@ -106,7 +129,7 @@
           </select>
         </label>
         <label class="check">
-          <input type="checkbox" id="visibleCheck" /> Show MS Word window while running (local Windows only)
+          <input type="checkbox" id="visibleCheck" /> Show MS Word window while running (debug)
         </label>
       </div>
     </section>

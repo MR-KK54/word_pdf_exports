@@ -99,7 +99,7 @@ function renderFiles() {
     nameEl.textContent = f.name;
     const meta = document.createElement("span");
     meta.className = "muted";
-    const sizeText = fmtSize(f.size);
+    const sizeText = f.isServerPath ? "[Server Path]" : fmtSize(f.size);
     meta.textContent = " · " + sizeText + (f.pages != null ? " · " + f.pages + " pages" : "");
     info.append(nameEl, meta);
 
@@ -132,22 +132,11 @@ async function inspectFile(f, btn) {
   btn.disabled = true;
   btn.textContent = "…";
   try {
-    const started = await api("/api/inspect", {
+    const info = await api("/api/inspect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: f.name }),
     });
-    let inspection = started;
-    while (inspection.status === "running") {
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      const response = await fetch("/api/inspect/" + encodeURIComponent(f.name));
-      inspection = await response.json();
-      if (!response.ok) throw new Error(inspection.error || `Request failed (${response.status})`);
-    }
-    if (inspection.status !== "done" || !inspection.info) {
-      throw new Error(inspection.error || "Inspection did not complete.");
-    }
-    const info = inspection.info;
     f.pages = info.page_count;
     appendLog("success", `Inspected ${f.name}: ${info.page_count} page(s), ${info.section_count} section(s)`);
   } catch (e) {
@@ -185,7 +174,7 @@ async function loadPreview() {
   if (!state.preview) return;
   previewBox.textContent = "Loading preview... (first Word preview may take a few seconds)";
   try {
-    const result = await fetchPreviewImage(state.preview.url, 760, "inline");
+    const result = await fetchPreviewImage(state.preview.url, 1000);
     if (!result) return;
     state.preview.total = result.total > 0 ? result.total : null;
     previewBox.classList.remove("muted");
@@ -198,7 +187,6 @@ async function loadPreview() {
     img.onclick = () => openModal();
     previewBox.appendChild(img);
     updatePreviewNav();
-    preloadNextPage();
   } catch (e) {
     previewBox.classList.add("muted");
     previewBox.textContent = "Preview error: " + e.message;
@@ -206,53 +194,33 @@ async function loadPreview() {
 }
 
 const previewCache = new Map();
-const previewAborts = { inline: null, modal: null, preload: null };
+let previewAbort = null;
 
-async function fetchPreviewImage(url, width, consumer = "inline", allowPoll = true, attempts = 90, page = state.preview?.page, cacheWhenStale = false) {
-  if (!state.preview) return null;
-  const key = url + "@" + width + "@" + page;
+async function fetchPreviewImage(url, width, allowPoll = true, attempts = 180) {
+  const key = url + "@" + width + "@" + state.preview.page;
   if (previewCache.has(key)) return previewCache.get(key);
 
-  if (previewAborts[consumer]) previewAborts[consumer].abort();
+  if (previewAbort) previewAbort.abort();
   const controller = new AbortController();
-  previewAborts[consumer] = controller;
+  previewAbort = controller;
   try {
-    const resp = await fetch(url + "?page=" + page + "&w=" + width, { signal: controller.signal });
+    let resp = await fetch(url + "?page=" + state.preview.page + "&w=" + width, { signal: controller.signal });
     if (resp.status === 202 && allowPoll) {
       if (attempts <= 0) throw new Error("Preview generation timed out");
-      await new Promise((r) => setTimeout(r, 500));
-      return fetchPreviewImage(url, width, consumer, allowPoll, attempts - 1, page, cacheWhenStale);
+      await new Promise((r) => setTimeout(r, 1000));
+      return fetchPreviewImage(url, width, allowPoll, attempts - 1);
     }
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const total = parseInt(resp.headers.get("X-Total-Pages") || "0", 10);
     const blob = await resp.blob();
     const urlObj = URL.createObjectURL(blob);
-    const isCurrent = state.preview && state.preview.url === url && state.preview.page === page;
-    if (!isCurrent && !cacheWhenStale) {
-      URL.revokeObjectURL(urlObj);
-      return null;
-    }
     previewCache.set(key, { urlObj, total });
-    if (previewCache.size > 60) {
-      previewCache.forEach((entry) => URL.revokeObjectURL(entry.urlObj));
-      previewCache.clear();
-    }
+    if (previewCache.size > 60) previewCache.clear();
     return { urlObj, total };
   } catch (e) {
     if (e.name === "AbortError") return null;
     throw e;
   }
-}
-
-function preloadNextPage() {
-  if (!state.preview || !state.preview.total || state.preview.page >= state.preview.total) return;
-  const nextPage = state.preview.page + 1;
-  const currentPage = state.preview.page;
-  const currentUrl = state.preview.url;
-  window.setTimeout(() => {
-    if (!state.preview || state.preview.url !== currentUrl || state.preview.page !== currentPage) return;
-    fetchPreviewImage(currentUrl, 760, "preload", true, 90, nextPage, true).catch(() => {});
-  }, 150);
 }
 
 function updatePreviewNav() {
@@ -297,7 +265,7 @@ function updateModalNav() {
 async function loadModalImage() {
   if (!state.preview) return;
   try {
-    const result = await fetchPreviewImage(state.preview.url, 1400, "modal");
+    const result = await fetchPreviewImage(state.preview.url, 1600);
     if (!result) return;
     state.preview.total = result.total > 0 ? result.total : null;
     modalImg.src = result.urlObj;
@@ -312,11 +280,10 @@ function gotoPage(page) {
   if (page < 1) page = 1;
   if (state.preview.total && page > state.preview.total) page = state.preview.total;
   state.preview.page = page;
+  loadPreview();
   if (!previewModal.classList.contains("hidden")) {
     updateModalNav();
     loadModalImage();
-  } else {
-    loadPreview();
   }
   $("gotoPageInput").value = "";
   $("modalGotoPageInput").value = "";
@@ -356,6 +323,7 @@ async function startExport() {
     files: state.files.map((f) => f.name),
     range: $("rangeInput").value.trim(),
     format: $("formatSelect").value,
+    output_dir: $("outputDirInput").value.trim(),
     naming_pattern: $("namingInput").value.trim(),
     overwrite: $("overwriteCheck").checked,
     clear_storage_after_export: $("clearServerStorageCheck") ? $("clearServerStorageCheck").checked : false,
@@ -519,6 +487,7 @@ async function resetSession() {
   if ($("overwriteCheck")) $("overwriteCheck").checked = true;
   if ($("clearServerStorageCheck")) $("clearServerStorageCheck").checked = true;
   $("visibleCheck").checked = false;
+  $("outputDirInput").value = defaultOutputDir;
 
   renderFiles();
   hidePreview();
@@ -537,6 +506,10 @@ async function resetSession() {
   } catch (e) {
     appendLog("info", "Session cleared.");
   }
+
+  // Reset server path tab inputs and state
+  if ($("serverPathInput")) $("serverPathInput").value = "";
+  if ($("tabUpload")) $("tabUpload").click();
 }
 
 /* ---------------- Events ---------------- */
@@ -594,15 +567,15 @@ $("closePreviewBtn").addEventListener("click", hidePreview);
 $("prevPageBtn").addEventListener("click", () => {
   if (state.preview && state.preview.page > 1) {
     state.preview.page -= 1;
+    loadPreview();
     if (!previewModal.classList.contains("hidden")) loadModalImage();
-    else loadPreview();
   }
 });
 $("nextPageBtn").addEventListener("click", () => {
   if (state.preview && (!state.preview.total || state.preview.page < state.preview.total)) {
     state.preview.page += 1;
+    loadPreview();
     if (!previewModal.classList.contains("hidden")) loadModalImage();
-    else loadPreview();
   }
 });
 $("modalPrevBtn").addEventListener("click", () => {
@@ -638,40 +611,63 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight") $("modalNextBtn").click();
 });
 
+const defaultOutputDir = $("outputDirInput").value;
+
+const clearOutputDirBtn = $("clearOutputDirBtn");
+if (clearOutputDirBtn) {
+  clearOutputDirBtn.addEventListener("click", () => {
+    $("outputDirInput").value = "";
+    $("outputDirInput").focus();
+    updateNamingPreview();
+  });
+}
 
 setProgress(0, 0);
 updatePreviewNav();
 schedulePreview();
 
-/* ---------------- PWA Installation & Service Worker ---------------- */
+// Tab switcher logic
+if ($("tabUpload") && $("tabServerPath")) {
+  $("tabUpload").addEventListener("click", () => {
+    $("tabUpload").style.background = "var(--accent)";
+    $("tabUpload").style.color = "var(--text)";
+    $("tabServerPath").style.background = "var(--panel-2)";
+    $("tabServerPath").style.border = "1px solid var(--border)";
+    $("tabServerPath").style.color = "var(--muted)";
+    $("uploadContainer").style.display = "block";
+    $("serverPathContainer").style.display = "none";
+  });
 
-let deferredPrompt = null;
-const installPwaBtn = $("installPwaBtn");
+  $("tabServerPath").addEventListener("click", () => {
+    $("tabServerPath").style.background = "var(--accent)";
+    $("tabServerPath").style.color = "var(--text)";
+    $("tabUpload").style.background = "var(--panel-2)";
+    $("tabUpload").style.border = "1px solid var(--border)";
+    $("tabUpload").style.color = "var(--muted)";
+    $("uploadContainer").style.display = "none";
+    $("serverPathContainer").style.display = "block";
+  });
+}
 
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  if (installPwaBtn) installPwaBtn.style.display = "inline-block";
-});
+if ($("addServerPathBtn")) {
+  $("addServerPathBtn").addEventListener("click", () => {
+    const pathVal = $("serverPathInput").value.trim();
+    if (!pathVal) return;
 
-if (installPwaBtn) {
-  installPwaBtn.addEventListener("click", async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === "accepted") {
-      appendLog("info", "App installation accepted by user.");
+    if (state.files.some((f) => f.name === pathVal)) {
+      alert("This path has already been added.");
+      return;
     }
-    deferredPrompt = null;
-    installPwaBtn.style.display = "none";
+
+    state.files.push({ name: pathVal, size: 0, pages: null, isServerPath: true });
+    renderFiles();
+    $("serverPathInput").value = "";
+    schedulePreview();
   });
 }
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    const swPath = window.location.pathname.includes("/static/") ? "sw.js" : "static/sw.js";
-    navigator.serviceWorker.register(swPath).catch(() => {});
+    navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
-
-
