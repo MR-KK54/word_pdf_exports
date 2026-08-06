@@ -409,28 +409,27 @@ class PageExporterEngine:
                 doc.save(abs_output)
                 return abs_output
 
-            # 1. Check explicit page breaks (w:br[@w:type="page"], lastRenderedPageBreak, page-break section breaks)
+            # 1. Check explicit page breaks (w:br[@w:type="page"], lastRenderedPageBreak, pageBreakBefore, section breaks)
             element_pages = []
             current_page = 1
             has_explicit_breaks = False
 
             for child in children:
                 xml = child.xml
-                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or 'nextPage' in xml or 'oddPage' in xml or 'evenPage' in xml)
+                has_break = ('type="page"' in xml or 'lastRenderedPageBreak' in xml or 'nextPage' in xml or 'oddPage' in xml or 'evenPage' in xml or 'pageBreakBefore' in xml or 'sectPr' in xml)
                 element_pages.append(current_page)
                 if has_break:
                     has_explicit_breaks = True
                     current_page += 1
 
-            # 2. If explicit breaks matched or exceed total_pages, use explicit mapping.
-            # Otherwise, divide content by text character density weight across target_pages!
-            if not has_explicit_breaks or (current_page < total_pages) or (end_page > current_page):
-                target_pages = max(total_pages, current_page, end_page, 1)
+            # 2. If explicit breaks are absent, divide content by text character density weight across target_pages
+            if not has_explicit_breaks:
+                target_pages = max(total_pages, end_page, 1)
                 
                 elem_weights = []
                 for child in children:
                     txt = "".join(child.itertext()) if hasattr(child, "itertext") else ""
-                    elem_weights.append(max(100, len(txt)))
+                    elem_weights.append(max(10, len(txt)))
 
                 total_weight = sum(elem_weights)
                 weight_per_page = total_weight / target_pages if total_weight > 0 else 1.0
@@ -453,6 +452,9 @@ class PageExporterEngine:
             if elements_to_remove:
                 for el in elements_to_remove:
                     try:
+                        sectPr = el.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sectPr')
+                        if sectPr is not None and body.find('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sectPr') is None:
+                            body.append(sectPr)
                         body.remove(el)
                     except Exception:
                         pass
