@@ -362,6 +362,13 @@ class PageExporterEngine:
 
         logger.info(f"Starting page export [{start_page}-{end_page}] from '{os.path.basename(abs_source)}' -> '{os.path.basename(abs_output)}'")
 
+        source_ext = os.path.splitext(abs_source)[1].lower().lstrip(".")
+        target_ext = export_format.lower().lstrip(".")
+        if start_page <= 1 and total_pages > 0 and end_page >= total_pages and (target_ext in ("same", "source") or target_ext == source_ext):
+            shutil.copy2(abs_source, abs_output)
+            logger.success(f"Full document range [{start_page}-{end_page}]: copied exact source file to '{abs_output}'")
+            return abs_output
+
         if mode == "aspose":
             return PageExporterEngine._export_by_aspose(
                 abs_source, abs_output, start_page, end_page, export_format
@@ -1453,14 +1460,17 @@ class PageExporterEngine:
                 if front_of_doc:
                     if doc.Tables.Count:
                         first_table_start = doc.Tables(1).Range.Start
-                        lead = doc.Range(
+                        lead_rng = doc.Range(
                             Start=doc.Content.Start, End=first_table_start
-                        ).Text
-                        if lead and not lead.strip("\r\x07\x0c\f"):
-                            doc.Range(
-                                Start=doc.Content.Start, End=first_table_start
-                            ).Delete()
-                            continue
+                        )
+                        # Do NOT delete leading range if it contains images, shapes, or fields!
+                        if (lead_rng.InlineShapes.Count == 0 and
+                            lead_rng.ShapeRange.Count == 0 and
+                            lead_rng.Fields.Count == 0):
+                            lead = lead_rng.Text
+                            if lead and not lead.strip("\r\n\t\x07\x0c\f\x08"):
+                                lead_rng.Delete()
+                                continue
                     rng = doc.Range(
                         Start=doc.Content.Start,
                         End=min(doc.Content.Start + 2, doc.Content.End),
