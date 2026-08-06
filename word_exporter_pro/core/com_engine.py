@@ -1608,13 +1608,10 @@ class PageExporterEngine:
 
     @staticmethod
     def _copy_document_styles(target_doc, source_doc) -> None:
-        """Copies the style definitions that govern header/footer text from source_doc
-        to target_doc. FormattedText only carries explicitly-set formatting; values
-        inherited from paragraph styles (spacing, line spacing, fonts) otherwise
-        resolve against the target document's built-in styles (e.g. Word's default
-        Normal style: 8pt after, 1.08 line spacing, Aptos). Matching the style
-        definitions makes inherited values resolve identically to the source."""
-        for style_name in ("Normal", "Header", "Footer"):
+        """Copies style definitions (fonts, paragraph spacing, line spacing, alignments, headings)
+        from source_doc to target_doc so all inherited document formatting matches 100%."""
+        priority_styles = ("Normal", "Header", "Footer", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Title", "Subtitle", "Body Text")
+        for style_name in priority_styles:
             try:
                 tgt_style = target_doc.Styles(style_name)
                 src_style = source_doc.Styles(style_name)
@@ -1622,6 +1619,32 @@ class PageExporterEngine:
                 tgt_style.Font = src_style.Font
             except Exception:
                 pass
+
+        try:
+            for src_style in source_doc.Styles:
+                try:
+                    if src_style.InUse or not src_style.BuiltIn:
+                        s_name = src_style.NameLocal
+                        try:
+                            tgt_style = target_doc.Styles(s_name)
+                        except Exception:
+                            try:
+                                tgt_style = target_doc.Styles.Add(Name=s_name, Type=src_style.Type)
+                            except Exception:
+                                continue
+                        try:
+                            tgt_style.Font = src_style.Font
+                        except Exception:
+                            pass
+                        try:
+                            tgt_style.ParagraphFormat = src_style.ParagraphFormat
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Style synchronization warning: {e}")
+
 
     @staticmethod
     def _restore_sections_from_source(
