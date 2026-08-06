@@ -10,6 +10,7 @@ import io
 import multiprocessing
 import os
 import queue
+import shutil
 import tempfile
 import threading
 import uuid
@@ -44,6 +45,14 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
 job_manager = JobManager()
 application = app
+
+
+@app.errorhandler(Exception)
+def _handle_unhandled_error(e):
+    """Return a JSON body for any unhandled 500 so the UI shows the real message
+    instead of a generic 'Request failed (500)'."""
+    logger.error(f"Unhandled exception in web request: {e}")
+    return jsonify({"error": f"Internal server error: {e}"}), 500
 
 # Large Word documents can take longer to paginate than a reverse proxy allows
 # for one HTTP request. Keep inspection work out of that request path and let

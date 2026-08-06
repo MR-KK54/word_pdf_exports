@@ -58,7 +58,7 @@ class WebJob:
     logs: List[dict] = field(default_factory=list)
     outputs: List[str] = field(default_factory=list)
     output_dir: str = ""
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -158,10 +158,18 @@ class JobManager:
                         _save_job_disk(job.snapshot())
 
             get_logger().add_listener(_listener)
-            processor = BatchProcessor(job.config)
-            with job._lock:
-                job.processor = processor
-            processor.start_async(on_progress, on_finished, on_file_created)
+            try:
+                processor = BatchProcessor(job.config)
+                with job._lock:
+                    job.processor = processor
+                processor.start_async(on_progress, on_finished, on_file_created)
+            except Exception as e:
+                logger.error(f"Failed to start export job '{job.job_id}': {e}")
+                with job._lock:
+                    job.errors.append(f"Failed to start job: {e}")
+                    job.status = "error"
+                    _save_job_disk(job.snapshot())
+                get_logger().remove_listener(_listener)
 
         threading.Thread(target=_run_starter, daemon=True).start()
 

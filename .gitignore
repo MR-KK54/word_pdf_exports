@@ -32,6 +32,7 @@ uploads/
 Downloads/
 test_table_footer_main.docx
 test_table_footer_trim.docx
+temp_pytest_dir/
 
 # Environments
 .venv/
