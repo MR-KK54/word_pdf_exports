@@ -194,18 +194,36 @@ class DocumentInspector:
             except Exception as com_err:
                 logger.warning(f"Word COM inspection warning: {com_err}")
 
-        # 2. Check Aspose.Words if available with fast error trap
+        # 2. Check Aspose.Words if available with process isolation to protect web worker
         if aw is not None:
             try:
-                doc = aw.Document(abs_path)
-                info["page_count"] = doc.page_count
-                info["section_count"] = len(doc.sections)
-                info["title"] = str(doc.built_in_document_properties.title or "")
-                info["author"] = str(doc.built_in_document_properties.author or "")
-                logger.info(f"Inspected '{info['filename']}' via Aspose.Words Layout Engine: {info['page_count']} page(s)")
-                return info
+                import sys
+                import subprocess
+                import json
+                cmd = [
+                    sys.executable,
+                    "-c",
+                    "import sys, json, aspose.words as aw; "
+                    "doc = aw.Document(sys.argv[1]); "
+                    "res = {'page_count': doc.page_count, 'section_count': len(doc.sections), "
+                    "'title': str(doc.built_in_document_properties.title or ''), "
+                    "'author': str(doc.built_in_document_properties.author or '')}; "
+                    "print(json.dumps(res))",
+                    abs_path,
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if res.returncode == 0 and res.stdout.strip():
+                    data = json.loads(res.stdout.strip())
+                    info["page_count"] = data.get("page_count", 0)
+                    info["section_count"] = data.get("section_count", 0)
+                    info["title"] = data.get("title", "")
+                    info["author"] = data.get("author", "")
+                    logger.info(f"Inspected '{info['filename']}' via isolated Aspose process: {info['page_count']} page(s)")
+                    return info
+                else:
+                    logger.warning(f"Isolated Aspose inspection process returned {res.returncode}: {res.stderr}")
             except Exception as aspose_err:
-                logger.warning(f"Aspose.Words inspection warning: {aspose_err}")
+                logger.warning(f"Isolated Aspose inspection process failed: {aspose_err}")
 
         # 3. Non-blocking instant python-docx fallback for Linux Cloud Server (0.005s, 0MB RAM)
         if docx is not None:

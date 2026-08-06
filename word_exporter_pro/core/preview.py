@@ -156,10 +156,23 @@ def _ensure_pdf(source_path: str) -> str:
 
         if aw is not None:
             try:
-                doc = aw.Document(os.path.abspath(source_path))
-                doc.save(os.path.abspath(preview_pdf))
-                return preview_pdf
+                import sys
+                import subprocess
+                cmd = [
+                    sys.executable,
+                    "-c",
+                    "import sys, aspose.words as aw; "
+                    "doc = aw.Document(sys.argv[1]); "
+                    "doc.save(sys.argv[2])",
+                    os.path.abspath(source_path),
+                    os.path.abspath(preview_pdf),
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+                if res.returncode == 0 and os.path.exists(preview_pdf) and os.path.getsize(preview_pdf) > 0:
+                    return preview_pdf
+                else:
+                    logger.warning(f"Isolated Aspose preview PDF process returned {res.returncode}: {res.stderr}")
             except Exception as e:
-                logger.warning(f"Aspose preview PDF generation skipped: {e}")
+                logger.warning(f"Isolated Aspose preview PDF process failed: {e}")
 
     return source_path
