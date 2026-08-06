@@ -726,7 +726,7 @@ class PageExporterEngine:
                                 source_doc=source_doc,
                                 start_section_index=start_section_index,
                                 end_section_index=end_section_index,
-                                only_last_section=True
+                                only_last_section=False
                             )
                         except Exception as restore_err:
                             logger.warning(f"Could not restore headers/footers for trimmed range: {restore_err}")
@@ -1645,6 +1645,31 @@ class PageExporterEngine:
         except Exception as e:
             logger.warning(f"Style synchronization warning: {e}")
 
+    @staticmethod
+    def _preserve_and_sync_tables(target_doc) -> None:
+        """Ensures table column widths, borders, shading, cell padding, and header row formatting
+        are preserved without distortion on exported document tables."""
+        try:
+            if not hasattr(target_doc, "Tables") or not target_doc.Tables.Count:
+                return
+            for tbl in target_doc.Tables:
+                try:
+                    tbl.AllowAutoFit = False
+                except Exception:
+                    pass
+                try:
+                    if tbl.Rows.Count > 0:
+                        for r in tbl.Rows:
+                            try:
+                                r.AllowBreakAcrossPages = True
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Table synchronization warning: {e}")
+
+
 
     @staticmethod
     def _restore_sections_from_source(
@@ -1666,12 +1691,10 @@ class PageExporterEngine:
             restore_indices = list(range(1, exported_count + 1))
 
         for j in restore_indices:
-            if range_section_count == exported_count:
-                source_index = start_section_index + j - 1
-            else:
-                source_index = start_section_index + j - 1 if j < exported_count else end_section_index
             if only_last_section:
                 source_index = end_section_index
+            else:
+                source_index = min(source_doc.Sections.Count, max(1, start_section_index + j - 1))
 
             try:
                 target_sec = target_doc.Sections(j)
@@ -1801,7 +1824,13 @@ class PageExporterEngine:
                 extract_range.Copy()
 
                 target_doc = word_app.Documents.Add()
-                target_doc.Content.Paste()
+                try:
+                    target_doc.Content.PasteAndFormat(16) # wdFormatOriginalFormatting = 16
+                except Exception:
+                    target_doc.Content.Paste()
+
+                # Preserve table AutoFit, column widths, and header row formatting
+                PageExporterEngine._preserve_and_sync_tables(target_doc)
 
                 # Restore high-fidelity headers, footers & page setup from original source_doc
                 if start_section_index is not None and end_section_index is not None:
