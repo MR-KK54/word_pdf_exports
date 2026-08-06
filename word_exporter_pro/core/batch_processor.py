@@ -138,16 +138,20 @@ class BatchProcessor:
                 overwrite=self.config.overwrite
             )
 
-            if start_p > total_pages:
+            if is_pdf and start_p > total_pages:
                 fail_count += 1
                 err_msg = f"Failed exporting {base_name} [pages {start_p}-{end_p}]: Requested start page {start_p} exceeds total document page count ({total_pages})."
                 logger.error(err_msg)
                 errors.append(err_msg)
                 continue
 
-            # Clamp range limits to [1, total_pages] boundaries for the actual extraction engines
-            clamped_start = max(1, min(start_p, total_pages))
-            clamped_end = max(clamped_start, min(end_p, total_pages))
+            # Clamp range limits safely for extraction engines
+            clamped_start = max(1, start_p)
+            if is_pdf:
+                clamped_start = min(clamped_start, total_pages)
+                clamped_end = max(clamped_start, min(end_p, total_pages))
+            else:
+                clamped_end = max(clamped_start, end_p)
 
             # Perform export
             try:

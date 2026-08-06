@@ -107,26 +107,36 @@ def test_batch_processor_all_individual_split(sample_multi_page_docx, tmp_path):
         assert os.path.getsize(fpath) > 0
 
 
-def test_out_of_bounds_range_spec_error(sample_multi_page_docx, tmp_path):
-    """Verifies that out-of-bounds start pages (e.g. 10-12 on 3-page doc) fail gracefully with error reporting."""
-    output_dir = os.path.join(str(tmp_path), "out_bounds")
+def test_custom_multi_range_split(sample_multi_page_docx, tmp_path):
+    """Verifies that multi-range spec '1-2, 3' splits document into separate distinct range files."""
+    output_dir = os.path.join(str(tmp_path), "out_multi_range")
     config = ExportJobConfig(
         source_files=[sample_multi_page_docx],
-        range_expression="10-12",
+        range_expression="1-2, 3",
         output_dir=output_dir,
         export_format="docx",
-        engine_mode="trimming"
+        engine_mode="trimming",
+        overwrite=True
     )
 
     processor = BatchProcessor(config)
-    results = {}
+    created_files = []
 
-    def on_finished(success_count, fail_count, errors):
-        results["success"] = success_count
-        results["fail"] = fail_count
-        results["errors"] = errors
+    def on_file_created(path):
+        created_files.append(path)
 
-    processor._run_job(on_progress=None, on_finished=on_finished)
+    processor._run_job(on_progress=None, on_finished=None, on_file_created=on_file_created)
 
-    assert results["fail"] == 1
-    assert any("exceeds total document page count" in err for err in results["errors"])
+    assert len(created_files) == 2
+    
+    # File 1 (Pages 1-2)
+    doc1 = docx.Document(created_files[0])
+    text1 = "\n".join(p.text for p in doc1.paragraphs if p.text.strip())
+    assert "Page 1" in text1 or "Page 2" in text1
+    assert "Page 3" not in text1
+
+    # File 2 (Page 3)
+    doc2 = docx.Document(created_files[1])
+    text2 = "\n".join(p.text for p in doc2.paragraphs if p.text.strip())
+    assert "Page 3" in text2
+    assert "Page 1" not in text2

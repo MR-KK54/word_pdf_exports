@@ -231,11 +231,20 @@ class DocumentInspector:
                 d = docx.Document(abs_path)
                 info["section_count"] = len(d.sections)
                 breaks = 1
+                total_chars = 0
                 for p in d.paragraphs:
                     xml = p._element.xml
                     if 'type="page"' in xml or 'lastRenderedPageBreak' in xml:
                         breaks += 1
-                info["page_count"] = max(1, breaks)
+                    total_chars += len(p.text)
+                for tbl in d.tables:
+                    for row in tbl.rows:
+                        for cell in row.cells:
+                            total_chars += len(cell.text)
+                if breaks > 1:
+                    info["page_count"] = breaks
+                else:
+                    info["page_count"] = max(1, (total_chars + 1799) // 1800)
                 return info
             except Exception as docx_err:
                 logger.warning(f"python-docx inspection warning: {docx_err}")
@@ -414,9 +423,9 @@ class PageExporterEngine:
                     current_page += 1
 
             # 2. If explicit breaks matched or exceed total_pages, use explicit mapping.
-            # Otherwise, divide content by text character density weight across total_pages!
-            if not has_explicit_breaks or (current_page < total_pages):
-                target_pages = max(total_pages, current_page, 1)
+            # Otherwise, divide content by text character density weight across target_pages!
+            if not has_explicit_breaks or (current_page < total_pages) or (end_page > current_page):
+                target_pages = max(total_pages, current_page, end_page, 1)
                 
                 elem_weights = []
                 for child in children:
