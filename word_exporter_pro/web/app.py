@@ -18,7 +18,7 @@ import zipfile
 
 from flask import Flask, jsonify, make_response, render_template, request, send_file
 
-from word_exporter_pro.core.com_engine import DocumentInspector, aw
+from word_exporter_pro.core.com_engine import DocumentInspector, aw, _is_libreoffice_available
 from word_exporter_pro.core.pdf_engine import PdfInspector
 from word_exporter_pro.core.preview import ensure_preview_async, render_page_preview
 from word_exporter_pro.core.batch_processor import ExportJobConfig
@@ -39,7 +39,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".docx", ".doc", ".docm", ".dotx", ".dotm", ".rtf", ".pdf"}
-ALLOWED_FORMATS = ["docx", "pdf", "doc", "rtf", "docm"]
+ALLOWED_FORMATS = ["same", "source", "docx", "pdf", "doc", "rtf", "docm"]
+
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB upload cap
@@ -60,13 +61,12 @@ def _handle_unhandled_error(e):
 _inspection_jobs: dict[str, dict] = {}
 _inspection_jobs_lock = threading.Lock()
 
-if aw is None:
-    logger.warning(
-        "Aspose.Words is not available. Word-document exports will be rejected; "
-        "check the Render build log for the aspose-words installation."
-    )
+if aw is not None:
+    logger.info("Aspose.Words engine is available for document layout.")
+elif _is_libreoffice_available():
+    logger.info("LibreOffice engine is available for high-fidelity document layout.")
 else:
-    logger.info("Aspose.Words is available for Linux Word-document pagination.")
+    logger.info("Native fast engine active for document processing.")
 
 
 def _inspect_document_process(path: str, result_queue) -> None:

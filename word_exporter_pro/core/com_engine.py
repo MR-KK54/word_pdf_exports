@@ -5,8 +5,10 @@ Provides high-fidelity page extraction and document pagination via Word.Applicat
 
 import os
 import shutil
+import subprocess
 import tempfile
 from typing import Dict, Any, Optional, Tuple
+
 
 try:
     import pythoncom  # type: ignore
@@ -55,6 +57,51 @@ def _require_server_word_engine() -> None:
 _TABLE_ROW_LAYOUT_CACHE: Dict[Tuple[int, int, int, int], Tuple[dict, int]] = {}
 
 
+def _is_libreoffice_available() -> bool:
+    """Returns True if LibreOffice (soffice) executable is installed and runnable on system PATH."""
+    try:
+        res = subprocess.run(["soffice", "--version"], capture_output=True, text=True, timeout=5)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def _convert_docx_to_pdf_libreoffice(abs_source: str, out_dir: str) -> Optional[str]:
+    """Converts a Word/RTF document to PDF using headless LibreOffice."""
+    try:
+        cmd = ["soffice", "--headless", "--convert-to", "pdf", abs_source, "--outdir", out_dir]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        if res.returncode == 0:
+            base = os.path.splitext(os.path.basename(abs_source))[0]
+            pdf_path = os.path.join(out_dir, f"{base}.pdf")
+            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                return pdf_path
+            logger.warning(f"LibreOffice command succeeded but output PDF not found at {pdf_path}")
+        else:
+            logger.warning(f"LibreOffice PDF conversion exited with code {res.returncode}: {res.stderr}")
+    except Exception as e:
+        logger.warning(f"LibreOffice conversion failed for '{abs_source}': {e}")
+    return None
+
+
+def _convert_pdf_to_docx_libreoffice(abs_pdf: str, abs_docx_out: str) -> Optional[str]:
+    """Converts a PDF document to DOCX using headless LibreOffice."""
+    out_dir = os.path.dirname(abs_docx_out)
+    try:
+        cmd = ["soffice", "--headless", "--infilter=writer_pdf_import", "--convert-to", "docx", abs_pdf, "--outdir", out_dir]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        if res.returncode == 0:
+            base = os.path.splitext(os.path.basename(abs_pdf))[0]
+            gen_path = os.path.join(out_dir, f"{base}.docx")
+            if os.path.exists(gen_path) and os.path.getsize(gen_path) > 0:
+                if gen_path != abs_docx_out:
+                    shutil.move(gen_path, abs_docx_out)
+                return abs_docx_out
+    except Exception as e:
+        logger.warning(f"LibreOffice PDF to DOCX conversion failed for '{abs_pdf}': {e}")
+    return None
+
+
 def _require_word_com() -> None:
     if pythoncom is None or win32com is None:
         raise RuntimeError(
@@ -87,6 +134,11 @@ class WordCOMContext:
         self.visible = visible
         self.word_app = None
         self.co_initialized = False
+
+    @property
+    def available(self) -> bool:
+        return pythoncom is not None and win32com is not None
+
 
     def __enter__(self):
         _require_word_com()
@@ -225,7 +277,27 @@ class DocumentInspector:
             except Exception as aspose_err:
                 logger.warning(f"Isolated Aspose inspection process failed: {aspose_err}")
 
-        # 3. Non-blocking instant python-docx fallback for Linux Cloud Server (0.005s, 0MB RAM)
+        # 3. Check LibreOffice if available on Linux server
+        if _is_libreoffice_available():
+            try:
+                temp_lo_dir = tempfile.mkdtemp(prefix="lo_inspect_")
+                try:
+                    pdf_out = _convert_docx_to_pdf_libreoffice(abs_path, temp_lo_dir)
+                    if pdf_out:
+                        import fitz
+                        doc = fitz.open(pdf_out)
+                        info["page_count"] = doc.page_count
+                        info["title"] = str(doc.metadata.get("title") or "")
+                        info["author"] = str(doc.metadata.get("author") or "")
+                        doc.close()
+                        logger.info(f"Inspected '{info['filename']}' via LibreOffice: {info['page_count']} page(s)")
+                        return info
+                finally:
+                    shutil.rmtree(temp_lo_dir, ignore_errors=True)
+            except Exception as lo_err:
+                logger.warning(f"LibreOffice inspection warning: {lo_err}")
+
+        # 4. Non-blocking instant python-docx fallback for Linux Cloud Server (0.005s, 0MB RAM)
         if docx is not None:
             try:
                 d = docx.Document(abs_path)
@@ -303,7 +375,15 @@ class PageExporterEngine:
                         abs_source, abs_output, start_page, end_page, export_format
                     )
                 except Exception as err:
-                    logger.warning(f"Aspose.Words server export failed ({err}); using fast docx fallback.")
+                    logger.warning(f"Aspose.Words server export failed ({err}); trying LibreOffice engine.")
+
+            if _is_libreoffice_available():
+                try:
+                    return PageExporterEngine._export_by_libreoffice(
+                        abs_source, abs_output, start_page, end_page, export_format
+                    )
+                except Exception as err:
+                    logger.warning(f"LibreOffice server export failed ({err}); using fast docx fallback.")
 
             t_pages = total_pages
             if t_pages <= 1:
@@ -329,6 +409,75 @@ class PageExporterEngine:
             return PageExporterEngine._export_by_selection(
                 abs_source, abs_output, start_page, end_page, fmt_code, visible
             )
+
+    @staticmethod
+    def _export_by_libreoffice(
+        abs_source: str,
+        abs_output: str,
+        start_page: int,
+        end_page: int,
+        export_format: str
+    ) -> str:
+        """LibreOffice Engine: Cross-platform page range extraction with 100% layout fidelity."""
+        temp_dir = tempfile.mkdtemp(prefix="lo_export_")
+        try:
+            pdf_path = _convert_docx_to_pdf_libreoffice(abs_source, temp_dir)
+            if not pdf_path or not os.path.exists(pdf_path):
+                raise RuntimeError(f"LibreOffice failed to convert '{abs_source}' to PDF.")
+
+            from word_exporter_pro.core.pdf_engine import PdfPageExtractor, PdfInspector
+            pdf_info = PdfInspector.get_info(pdf_path)
+            tp = pdf_info.get("page_count", 1)
+
+            clamped_start = max(1, min(start_page, tp))
+            clamped_end = max(clamped_start, min(end_page, tp))
+
+            if export_format.lower() == "pdf":
+                res = PdfPageExtractor.extract_range(
+                    source_file=pdf_path,
+                    output_file=abs_output,
+                    start_page=clamped_start,
+                    end_page=clamped_end
+                )
+                logger.success(f"Exported pages [{start_page}-{end_page}] via LibreOffice PDF engine to '{abs_output}'")
+                return res
+            else:
+                split_pdf = os.path.join(temp_dir, "split_range.pdf")
+                PdfPageExtractor.extract_range(
+                    source_file=pdf_path,
+                    output_file=split_pdf,
+                    start_page=clamped_start,
+                    end_page=clamped_end
+                )
+
+                if aw is not None:
+                    try:
+                        import sys
+                        cmd = [
+                            sys.executable,
+                            "-c",
+                            "import sys, aspose.words as aw; "
+                            "doc = aw.Document(sys.argv[1]); "
+                            "doc.save(sys.argv[2])",
+                            split_pdf,
+                            abs_output
+                        ]
+                        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+                        if r.returncode == 0 and os.path.exists(abs_output) and os.path.getsize(abs_output) > 0:
+                            logger.success(f"Converted split PDF range [{start_page}-{end_page}] to '{abs_output}' via Aspose")
+                            return abs_output
+                    except Exception as err:
+                        logger.warning(f"Aspose PDF to DOCX conversion failed: {err}")
+
+                converted_docx = _convert_pdf_to_docx_libreoffice(split_pdf, abs_output)
+                if converted_docx and os.path.exists(converted_docx) and os.path.getsize(converted_docx) > 0:
+                    logger.success(f"Converted split PDF range [{start_page}-{end_page}] to '{abs_output}' via LibreOffice")
+                    return abs_output
+
+                raise RuntimeError("Could not convert split PDF back to DOCX format.")
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     @staticmethod
     def _export_by_aspose(
@@ -366,25 +515,32 @@ class PageExporterEngine:
                 logger.success(f"Exported pages [{start_page}-{end_page}] via isolated Aspose process to '{abs_output}'")
                 return abs_output
             else:
-                logger.warning(f"Isolated Aspose process exited ({res.returncode}): {res.stderr}; falling back to ultra-fast native engine.")
+                logger.warning(f"Isolated Aspose process exited ({res.returncode}): {res.stderr}; falling back to secondary server engine.")
         except Exception as e:
-            logger.warning(f"Isolated Aspose process failed or timed out: {e}; falling back to ultra-fast native engine.")
+            logger.warning(f"Isolated Aspose process failed or timed out: {e}; falling back to secondary server engine.")
 
-        # Fail-safe fallback: use MS Word COM on Windows, or fast python-docx trimming on Linux server
+        # Fail-safe fallback: use MS Word COM on Windows, or LibreOffice / python-docx on Linux server
         if pythoncom not in (None,) and win32com not in (None,):
             fmt_code = EXPORT_FORMAT_MAP.get(export_format.lower(), 16)
             return PageExporterEngine._export_by_trimming(
                 abs_source, abs_output, start_page, end_page, fmt_code, False
             )
-        else:
+        elif _is_libreoffice_available():
             try:
-                info = DocumentInspector.get_info(abs_source)
-                t_pages = info.get("page_count", 1)
-            except Exception:
-                t_pages = 1
-            return PageExporterEngine._export_by_docx_fallback(
-                abs_source, abs_output, start_page, end_page, export_format, total_pages=t_pages
-            )
+                return PageExporterEngine._export_by_libreoffice(
+                    abs_source, abs_output, start_page, end_page, export_format
+                )
+            except Exception as lo_err:
+                logger.warning(f"LibreOffice fallback export failed ({lo_err}); using fast docx fallback.")
+
+        try:
+            info = DocumentInspector.get_info(abs_source)
+            t_pages = info.get("page_count", 1)
+        except Exception:
+            t_pages = 1
+        return PageExporterEngine._export_by_docx_fallback(
+            abs_source, abs_output, start_page, end_page, export_format, total_pages=t_pages
+        )
 
     @staticmethod
     def _export_by_docx_fallback(

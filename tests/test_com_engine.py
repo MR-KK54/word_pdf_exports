@@ -199,4 +199,16 @@ def test_export_main_file_footer_matching(tmp_path):
             exported_doc.Close(SaveChanges=False)
 
 
+def test_word_com_context_available():
+    ctx = WordCOMContext()
+    assert isinstance(ctx.available, bool)
+
+
+def test_libreoffice_availability_check():
+    from word_exporter_pro.core.com_engine import _is_libreoffice_available
+    is_available = _is_libreoffice_available()
+    assert isinstance(is_available, bool)
+
+
+
 

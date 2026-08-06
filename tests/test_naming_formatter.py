@@ -48,3 +48,16 @@ def test_resolve_output_path_overwrite(tmp_path):
 
     res = NamingFormatter.resolve_output_path(out_dir, "test.docx", overwrite=True)
     assert res == file1
+
+
+def test_generate_filename_same_format():
+    fn = NamingFormatter.generate_filename(
+        pattern="{original_name}_range_{start_page}-{end_page}",
+        original_filepath="C:/docs/FinancialReport.pdf",
+        page_range=(1, 3),
+        total_pages=10,
+        output_ext="same",
+        batch_index=1
+    )
+    assert fn.endswith(".pdf")
+

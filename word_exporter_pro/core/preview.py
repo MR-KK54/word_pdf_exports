@@ -189,4 +189,20 @@ def _ensure_pdf(source_path: str) -> str:
             except Exception as e:
                 logger.warning(f"Isolated Aspose preview PDF process failed: {e}")
 
+        # LibreOffice preview PDF generation for Linux server
+        try:
+            import tempfile, shutil
+            from word_exporter_pro.core.com_engine import _convert_docx_to_pdf_libreoffice, _is_libreoffice_available
+            if _is_libreoffice_available():
+                temp_dir = tempfile.mkdtemp(prefix="preview_lo_")
+                try:
+                    generated_pdf = _convert_docx_to_pdf_libreoffice(os.path.abspath(source_path), temp_dir)
+                    if generated_pdf and os.path.exists(generated_pdf):
+                        shutil.copy2(generated_pdf, os.path.abspath(preview_pdf))
+                        return preview_pdf
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as lo_err:
+            logger.warning(f"LibreOffice preview generation failed: {lo_err}")
+
     return source_path

@@ -197,11 +197,11 @@ class WordExporterApp(ctk.CTk):
         fmt_lbl = ctk.CTkLabel(output_card, text="Export Format:")
         fmt_lbl.grid(row=1, column=0, padx=15, pady=5, sticky="w")
 
-        self.format_var = ctk.StringVar(value="docx")
+        self.format_var = ctk.StringVar(value="same")
         fmt_dropdown = ctk.CTkOptionMenu(
             output_card,
             variable=self.format_var,
-            values=["docx", "pdf", "doc", "rtf", "docm"],
+            values=["same", "docx", "pdf", "doc", "rtf", "docm"],
             command=lambda v: self._update_preview()
         )
         fmt_dropdown.grid(row=1, column=1, padx=15, pady=5, sticky="w")

@@ -1,11 +1,9 @@
 services:
   - type: web
     name: word-pdf-exports
-    env: python
-    buildCommand: pip install -r requirements.txt
+    env: docker
+    dockerfilePath: Dockerfile
     # Job state is in memory, so use one worker; threads keep polling and
     # uploads responsive while an export runs in the background.
     startCommand: gunicorn --workers 1 --threads 4 --timeout 120 run_web:application
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.8
+

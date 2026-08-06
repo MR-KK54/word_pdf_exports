@@ -43,7 +43,8 @@ Examples:
     parser.add_argument("-b", "--batch", help="Batch glob pattern or directory path (e.g. './docs/*.docx')")
     parser.add_argument("-r", "--range", default="1-end", help="Page range specification (e.g., '1-3', '1, 5, 8-10', 'even', 'odd', 'all-individual'). Default: '1-end'")
     parser.add_argument("-o", "--output-dir", default="./exported_pages", help="Output directory path. Default: './exported_pages'")
-    parser.add_argument("-f", "--format", choices=["docx", "pdf", "doc", "rtf", "docm"], default="docx", help="Export file format. Default: 'docx'")
+    parser.add_argument("-f", "--format", choices=["same", "docx", "pdf", "doc", "rtf", "docm"], default="same", help="Export file format ('same' matches source file type). Default: 'same'")
+
     parser.add_argument("-n", "--naming", default="{original_name}_pages_{start_page}-{end_page}", help="Output filename template. Placeholders: {original_name}, {range}, {start_page}, {end_page}, {timestamp}")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output files if they already exist")
     parser.add_argument("--mode", choices=["trimming", "selection"], default="trimming", help="Extraction engine mode. Default: 'trimming'")

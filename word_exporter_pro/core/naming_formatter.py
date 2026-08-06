@@ -89,7 +89,11 @@ class NamingFormatter:
         clean_name = cls.sanitize_filename(result)
         
         # Ensure correct extension
-        clean_ext = output_ext.lstrip(".")
+        if output_ext.lower() in ("same", "source"):
+            clean_ext = source_ext if source_ext else "docx"
+        else:
+            clean_ext = output_ext.lstrip(".")
+
         if not clean_name.lower().endswith(f".{clean_ext.lower()}"):
             clean_name = f"{clean_name}.{clean_ext}"
 

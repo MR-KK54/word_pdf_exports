@@ -119,8 +119,13 @@ class BatchProcessor:
                 except Exception as e:
                     logger.error(f"Error in progress callback: {e}")
 
-            # PDF sources are always exported as PDF
-            fmt = "pdf" if is_pdf else self.config.export_format
+            # PDF sources are always exported as PDF; "same"/"source" matches original file extension
+            src_ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+            if is_pdf or self.config.export_format.lower() in ("same", "source"):
+                fmt = src_ext if src_ext else "docx"
+            else:
+                fmt = self.config.export_format
+
 
             # Generate output file path (using the original range name)
             filename = NamingFormatter.generate_filename(
