@@ -330,6 +330,8 @@ def api_output_preview(job_id, filename):
         return jsonify({"error": "Output file not found."}), 404
     if not os.path.isfile(filepath):
         return jsonify({"error": f"Output file not found: {filename}"}), 404
+    if not filepath.lower().endswith(".pdf") and not ensure_preview_async(filepath):
+        return jsonify({"status": "generating"}), 202
     return _preview_response(filepath)
 
 

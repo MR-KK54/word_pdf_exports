@@ -21,7 +21,21 @@ def render_docx_fast_preview_jpeg(source_path: str, page: int = 1, max_width: in
     """Generates an instant 0.05s stylized page JPEG image directly from document structure."""
     try:
         doc = docx.Document(source_path)
-        total_pages = max(1, len(doc.paragraphs) // 15 + 1)
+        breaks = 1
+        total_chars = 0
+        for p in doc.paragraphs:
+            xml = p._element.xml
+            if 'type="page"' in xml or 'lastRenderedPageBreak' in xml:
+                breaks += 1
+            total_chars += len(p.text)
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    total_chars += len(cell.text)
+        if breaks > 1:
+            total_pages = breaks
+        else:
+            total_pages = max(1, (total_chars + 1799) // 1800)
     except Exception:
         total_pages = 1
 
