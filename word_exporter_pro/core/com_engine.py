@@ -567,7 +567,7 @@ class PageExporterEngine:
             doc = docx.Document(abs_source)
             body = doc._body._element
 
-            children = [child for child in list(body) if child.tag.rsplit('}', 1)[-1] in ('p', 'tbl')]
+            children = [child for child in list(body) if child.tag.rsplit('}', 1)[-1] in ('p', 'tbl', 'sdt', 'customXml')]
             if not children:
                 doc.save(abs_output)
                 return abs_output
