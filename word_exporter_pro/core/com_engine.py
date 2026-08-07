@@ -722,27 +722,8 @@ class PageExporterEngine:
                             word_app, doc, start_page, start_pos
                         )
 
-                    # 3. Remove any stray page-break/blank paragraph left at the cut edges so no
-                    #    spurious blank front/back page survives in the trimmed result. This runs
-                    #    BEFORE the page-count compaction below: a leading empty paragraph before
-                    #    a table (which Word keeps when everything before it is deleted) would
-                    #    otherwise push the count over by one page and make the compaction loop
-                    #    burn through all its iterations trying to reclaim it. The front edge is
-                    #    only cleaned when a front trim actually occurred, so a legitimate leading
-                    #    page-break on a range starting at page 1 is kept.
-                    if start_page > 1:
-                        PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=True)
-                    PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
-
-                    # 4. Guarantee the exact page count. The source-boundary cuts above
-                    #    should already hold it, but a razor-edge reflow (trailing empty
-                    #    paragraph pushed onto its own page) may need a compensating cut.
-                    PageExporterEngine._trim_tail_to_keep(word_app, doc, expected_keep)
-
-                    # 5. When trimming removes content BEFORE/AFTER the range, the boundary section breaks
-                    #    are deleted too, so the kept sections may inherit an adjacent (wrong) section's
-                    #    header/footer, page setup, and page-number scheme. Re-sync them against the
-                    #    original source document so the exported range looks correct.
+                    # 3. When trimming removes content BEFORE/AFTER the range, restore exact headers/footers,
+                    #    page setup, styles, and page numbering from the source document.
                     if end_page < total_pages or start_page > 1:
                         try:
                             start_section_index = PageExporterEngine._section_containing_page(source_doc, start_page)
@@ -757,11 +738,16 @@ class PageExporterEngine:
                         except Exception as restore_err:
                             logger.warning(f"Could not restore headers/footers for trimmed range: {restore_err}")
 
-                    # 6. Restart page numbering from 1 on the trimmed document so PAGE/NUMPAGES
-                    #    fields show the range-relative numbers (e.g. "2 of 3") instead of the
-                    #    source document's original page numbers. This must run AFTER the section
-                    #    restore above, otherwise the earlier StartingNumber overwrites would win.
                     PageExporterEngine._restart_page_numbering(doc, start_page)
+
+                    # 4. Clean boundaries AFTER section restoration so any trailing section break or page break
+                    #    is converted/deleted LAST and can NEVER be re-inserted.
+                    if start_page > 1:
+                        PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=True)
+                    PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
+
+                    # 5. Guarantee the exact page count and remove trailing overflow.
+                    PageExporterEngine._trim_tail_to_keep(word_app, doc, expected_keep)
 
                     # 6. Natively update field codes (PAGE, NUMPAGES, TOC, etc.) across the body
                     #    and every header/footer so they reflect the final trimmed content.
@@ -1838,6 +1824,13 @@ class PageExporterEngine:
                         setattr(ps_target, attr, getattr(ps_source, attr))
                     except Exception:
                         pass
+
+                # If single section range or last section, ensure SectionStart is wdSectionContinuous (0)
+                try:
+                    if range_section_count <= 1 or j == exported_count:
+                        ps_target.SectionStart = 0 # wdSectionContinuous
+                except Exception:
+                    pass
 
                 try:
                     ps_target.DifferentFirstPageHeaderFooter = ps_source.DifferentFirstPageHeaderFooter
