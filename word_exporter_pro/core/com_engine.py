@@ -1535,6 +1535,17 @@ class PageExporterEngine:
                     except Exception:
                         pass
 
+                    # Clean trailing empty paragraphs/breaks at doc.Content.End if they contain only whitespace
+                    try:
+                        if doc.Content.End > doc.Content.Start + 2:
+                            tail_rng = doc.Range(Start=max(doc.Content.Start, doc.Content.End - 12), End=doc.Content.End)
+                            if tail_rng.InlineShapes.Count == 0 and tail_rng.ShapeRange.Count == 0 and tail_rng.Tables.Count == 0:
+                                txt = tail_rng.Text
+                                if txt and not txt.strip("\r\n\t\x0c\f\x08"):
+                                    doc.Range(Start=doc.Content.End - len(txt), End=doc.Content.End - 1).Delete()
+                    except Exception:
+                        pass
+
                     # A manual page break (form-feed) left at the trimmed tail pushes
                     # a spurious empty last page even though all real content was cut
                     # away. Scan the trailing paragraphs (the final empty paragraph
