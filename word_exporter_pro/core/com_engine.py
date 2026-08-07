@@ -1525,12 +1525,12 @@ class PageExporterEngine:
                     if doc.Content.End <= 2:
                         break
 
-                    # Preserve layout before breaks: convert SectionStart in (2, 3, 4) to 0 (Continuous)
-                    # across ALL sections in doc so section breaks between Section 1 and Section 2
-                    # (like Section Break Next Page at the end of Page 1) do NOT spawn extra blank pages.
+                    # Remove trailing section break from the last page of the range spec:
+                    # Save Section 1 layout attributes, then delete the Section Break paragraph mark
+                    # so Section Break (Next Page) is completely removed from the document tail.
                     try:
-                        if doc.Sections.Count > 0:
-                            for s_idx in range(1, doc.Sections.Count + 1):
+                        if doc.Sections.Count > 1:
+                            for s_idx in range(doc.Sections.Count - 1, 0, -1):
                                 try:
                                     sec = doc.Sections(s_idx)
                                     ps = sec.PageSetup
@@ -1541,11 +1541,20 @@ class PageExporterEngine:
                                     orig_w = ps.PageWidth
                                     orig_h = ps.PageHeight
                                     orig_orient = ps.Orientation
+                                    orig_hdr_dist = ps.HeaderDistance
+                                    orig_ftr_dist = ps.FooterDistance
 
+                                    # Try converting SectionStart to Continuous first
                                     if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
                                         ps.SectionStart = 0 # wdSectionContinuous
 
-                                    # Re-apply preserved layout to guarantee preceding content layout is unchanged
+                                    # Delete trailing section break character at section boundary if it sits near doc.Content.End
+                                    sec_end = sec.Range.End
+                                    if sec_end >= doc.Content.End - 10:
+                                        break_rng = doc.Range(Start=max(sec.Range.Start, sec_end - 1), End=sec_end)
+                                        break_rng.Delete()
+
+                                    # Re-apply preserved layout to guarantee preceding content layout is 100% unchanged
                                     ps.TopMargin = orig_top
                                     ps.BottomMargin = orig_bot
                                     ps.LeftMargin = orig_left
@@ -1553,10 +1562,17 @@ class PageExporterEngine:
                                     ps.PageWidth = orig_w
                                     ps.PageHeight = orig_h
                                     ps.Orientation = orig_orient
+                                    ps.HeaderDistance = orig_hdr_dist
+                                    ps.FooterDistance = orig_ftr_dist
                                 except Exception:
                                     pass
+                        elif doc.Sections.Count == 1:
+                            sec = doc.Sections(1)
+                            ps = sec.PageSetup
+                            if ps.SectionStart in (2, 3, 4):
+                                ps.SectionStart = 0
                     except Exception as sec_lock_err:
-                        logger.warning(f"Trailing section break conversion warning: {sec_lock_err}")
+                        logger.warning(f"Trailing section break removal warning: {sec_lock_err}")
 
                     # Clean trailing empty paragraphs/breaks at doc.Content.End if they contain only whitespace
                     try:
