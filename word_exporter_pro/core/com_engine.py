@@ -1741,6 +1741,7 @@ class PageExporterEngine:
                 for attr in (
                     "TopMargin", "BottomMargin", "LeftMargin", "RightMargin",
                     "HeaderDistance", "FooterDistance", "PageWidth", "PageHeight", "Orientation",
+                    "Gutter", "SectionStart", "SectionDirection"
                 ):
                     try:
                         setattr(ps_target, attr, getattr(ps_source, attr))
