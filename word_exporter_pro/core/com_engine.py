@@ -193,6 +193,32 @@ class WordCOMContext:
             self.co_initialized = False
 
 
+class DocumentStructureModel:
+    """Internal model analyzing complete Word document layout, section breaks, headers/footers, and page setups."""
+
+    def __init__(self, file_path: str):
+        self.file_path = os.path.abspath(file_path)
+        self.filename = os.path.basename(self.file_path)
+        self.page_count = 0
+        self.section_count = 0
+        self.table_count = 0
+        self.sections: List[Dict[str, Any]] = []
+        self.has_floating_objects = False
+        self.has_macros = self.file_path.lower().endswith(".docm")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "path": self.file_path,
+            "filename": self.filename,
+            "page_count": self.page_count,
+            "section_count": self.section_count,
+            "table_count": self.table_count,
+            "sections": self.sections,
+            "has_floating_objects": self.has_floating_objects,
+            "has_macros": self.has_macros,
+        }
+
+
 class DocumentInspector:
     """Inspects Word document structure using MS Word layout engine with python-docx server fallback."""
 
