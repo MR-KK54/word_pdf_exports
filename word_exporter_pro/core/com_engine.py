@@ -1525,15 +1525,32 @@ class PageExporterEngine:
                     if doc.Content.End <= 2:
                         break
 
-                    # If the final section ends with a Next Page / Even / Odd Section Break,
-                    # convert SectionStart to wdSectionContinuous (0) so no trailing blank page is spawned.
+                    # Preserve layout before breaks: lock original PageSetup attributes before converting trailing SectionStart
                     try:
                         if doc.Sections.Count > 0:
                             last_sec = doc.Sections(doc.Sections.Count)
-                            if last_sec.PageSetup.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
-                                last_sec.PageSetup.SectionStart = 0 # Continuous
-                    except Exception:
-                        pass
+                            ps = last_sec.PageSetup
+                            orig_top = ps.TopMargin
+                            orig_bot = ps.BottomMargin
+                            orig_left = ps.LeftMargin
+                            orig_right = ps.RightMargin
+                            orig_w = ps.PageWidth
+                            orig_h = ps.PageHeight
+                            orig_orient = ps.Orientation
+
+                            if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
+                                ps.SectionStart = 0 # Continuous
+
+                            # Re-apply preserved layout to guarantee preceding content layout is unchanged
+                            ps.TopMargin = orig_top
+                            ps.BottomMargin = orig_bot
+                            ps.LeftMargin = orig_left
+                            ps.RightMargin = orig_right
+                            ps.PageWidth = orig_w
+                            ps.PageHeight = orig_h
+                            ps.Orientation = orig_orient
+                    except Exception as sec_lock_err:
+                        logger.warning(f"Trailing section break conversion warning: {sec_lock_err}")
 
                     # Clean trailing empty paragraphs/breaks at doc.Content.End if they contain only whitespace
                     try:
