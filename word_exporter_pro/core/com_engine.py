@@ -1525,30 +1525,36 @@ class PageExporterEngine:
                     if doc.Content.End <= 2:
                         break
 
-                    # Preserve layout before breaks: lock original PageSetup attributes before converting trailing SectionStart
+                    # Preserve layout before breaks: convert SectionStart in (2, 3, 4) to 0 (Continuous)
+                    # across ALL sections in doc so section breaks between Section 1 and Section 2
+                    # (like Section Break Next Page at the end of Page 1) do NOT spawn extra blank pages.
                     try:
                         if doc.Sections.Count > 0:
-                            last_sec = doc.Sections(doc.Sections.Count)
-                            ps = last_sec.PageSetup
-                            orig_top = ps.TopMargin
-                            orig_bot = ps.BottomMargin
-                            orig_left = ps.LeftMargin
-                            orig_right = ps.RightMargin
-                            orig_w = ps.PageWidth
-                            orig_h = ps.PageHeight
-                            orig_orient = ps.Orientation
+                            for s_idx in range(1, doc.Sections.Count + 1):
+                                try:
+                                    sec = doc.Sections(s_idx)
+                                    ps = sec.PageSetup
+                                    orig_top = ps.TopMargin
+                                    orig_bot = ps.BottomMargin
+                                    orig_left = ps.LeftMargin
+                                    orig_right = ps.RightMargin
+                                    orig_w = ps.PageWidth
+                                    orig_h = ps.PageHeight
+                                    orig_orient = ps.Orientation
 
-                            if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
-                                ps.SectionStart = 0 # Continuous
+                                    if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
+                                        ps.SectionStart = 0 # wdSectionContinuous
 
-                            # Re-apply preserved layout to guarantee preceding content layout is unchanged
-                            ps.TopMargin = orig_top
-                            ps.BottomMargin = orig_bot
-                            ps.LeftMargin = orig_left
-                            ps.RightMargin = orig_right
-                            ps.PageWidth = orig_w
-                            ps.PageHeight = orig_h
-                            ps.Orientation = orig_orient
+                                    # Re-apply preserved layout to guarantee preceding content layout is unchanged
+                                    ps.TopMargin = orig_top
+                                    ps.BottomMargin = orig_bot
+                                    ps.LeftMargin = orig_left
+                                    ps.RightMargin = orig_right
+                                    ps.PageWidth = orig_w
+                                    ps.PageHeight = orig_h
+                                    ps.Orientation = orig_orient
+                                except Exception:
+                                    pass
                     except Exception as sec_lock_err:
                         logger.warning(f"Trailing section break conversion warning: {sec_lock_err}")
 
