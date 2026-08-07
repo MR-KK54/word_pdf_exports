@@ -789,7 +789,21 @@ class PageExporterEngine:
                     #    after every layout-affecting step and right before saving.
                     PageExporterEngine._compact_to_fit(word_app, doc, expected_keep)
                     doc.SaveAs2(FileName=abs_output, FileFormat=fmt_code)
-                    logger.success(f"Exported pages [{start_page}-{end_page}] to '{abs_output}'")
+
+                    # 7. Post-export Verification: Calculate rendered page count and verify exact match
+                    final_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+                    if final_pages != expected_keep:
+                        logger.warning(f"Post-trimming verification: rendered page count {final_pages} != expected {expected_keep}. Converting trailing section break.")
+                        if doc.Sections.Count > 0:
+                            doc.Sections(doc.Sections.Count).PageSetup.SectionStart = 0 # wdSectionContinuous
+                        PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
+                        doc.Save()
+                        final_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
+
+                    if final_pages == expected_keep:
+                        logger.success(f"Successfully exported exact {expected_keep} page(s) [{start_page}-{end_page}] to '{abs_output}'")
+                    else:
+                        logger.warning(f"Rendered page count report: requested {expected_keep} page(s), produced {final_pages} page(s) in '{abs_output}'.")
 
                 finally:
                     if source_doc:
@@ -1510,12 +1524,21 @@ class PageExporterEngine:
                 else:
                     if doc.Content.End <= 2:
                         break
+
+                    # If the final section ends with a Next Page / Even / Odd Section Break,
+                    # convert SectionStart to wdSectionContinuous (0) so no trailing blank page is spawned.
+                    try:
+                        if doc.Sections.Count > 0:
+                            last_sec = doc.Sections(doc.Sections.Count)
+                            if last_sec.PageSetup.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
+                                last_sec.PageSetup.SectionStart = 0 # Continuous
+                    except Exception:
+                        pass
+
                     # A manual page break (form-feed) left at the trimmed tail pushes
                     # a spurious empty last page even though all real content was cut
                     # away. Scan the trailing paragraphs (the final empty paragraph
-                    # plus the one before it) for such a break and delete it. The
-                    # window is a few characters wider than the final paragraph mark
-                    # so a break in the second-to-last paragraph is also caught.
+                    # plus the one before it) for such a break and delete it.
                     tail_start = max(doc.Content.Start, doc.Content.End - 48)
                     rng = doc.Range(Start=tail_start, End=doc.Content.End)
                     idx = rng.Text.find("\x0c")
