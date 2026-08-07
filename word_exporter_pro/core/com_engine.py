@@ -779,10 +779,16 @@ class PageExporterEngine:
                     # 7. Post-export Verification: Calculate rendered page count and verify exact match
                     final_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
                     if final_pages != expected_keep:
-                        logger.warning(f"Post-trimming verification: rendered page count {final_pages} != expected {expected_keep}. Converting trailing section break.")
-                        if doc.Sections.Count > 0:
-                            doc.Sections(doc.Sections.Count).PageSetup.SectionStart = 0 # wdSectionContinuous
+                        logger.warning(f"Post-trimming verification: rendered page count {final_pages} != expected {expected_keep}. Cleaning trailing breaks.")
                         PageExporterEngine._clean_page_boundary(word_app, doc, front_of_doc=False)
+                        PageExporterEngine._compact_to_fit(word_app, doc, expected_keep)
+                        # Only force the very last section to Continuous if it holds no
+                        # real content; a last section that still has content and starts
+                        # a new page must keep its own layout.
+                        if doc.Sections.Count > 0 and PageExporterEngine._section_is_empty(
+                            doc.Sections(doc.Sections.Count)
+                        ):
+                            doc.Sections(doc.Sections.Count).PageSetup.SectionStart = 0  # wdSectionContinuous
                         doc.Save()
                         final_pages = doc.ComputeStatistics(WD_STATISTIC_PAGES)
 
@@ -1511,100 +1517,157 @@ class PageExporterEngine:
                     if doc.Content.End <= 2:
                         break
 
-                    # Unconditional Trailing Break Removal & Layout Locking:
-                    # 1. Save Section 1 PageSetup layout attributes (margins, width, height, orientation, distances)
+                    # Trailing (last-page) break cleanup, scoped so it can never
+                    # distort the layout of the LAST KEPT page.
+                    #
+                    # The previous implementation converted every section break to
+                    # Continuous and deleted every section break paragraph mark, then
+                    # re-applied Section 1's PageSetup to the whole document. When the
+                    # kept range spans sections with different layouts (e.g. a kept
+                    # landscape page followed by a trimmed trailing section), that
+                    # merged the portrait and landscape pages into one flow and
+                    # collapsed the export to a single page.
+                    #
+                    # Replacement rules (each is conservative):
+                    #   * Only the trailing tail is touched - we stop as soon as the
+                    #     last real-content paragraph is reached.
+                    #   * A trailing manual page break character (\x0c / \f) is deleted
+                    #     when everything after it is whitespace (a trailing break).
+                    #   * A trailing section whose body holds no real content is merged
+                    #     into the section before it AFTER copying that section's
+                    #     PageSetup onto it, so the merge keeps the last kept page's
+                    #     margins/orientation (Word gives the merged section the layout
+                    #     of the section following the break - the one we overwrote).
+                    #   * Trailing empty paragraphs (no text, images, shapes, fields,
+                    #     or table content) are deleted.
+                    #   * Sections that still hold real content are never modified.
                     try:
-                        orig_ps = {}
-                        if doc.Sections.Count > 0:
-                            sec1 = doc.Sections(1)
-                            ps1 = sec1.PageSetup
-                            for attr in (
-                                "TopMargin", "BottomMargin", "LeftMargin", "RightMargin",
-                                "PageWidth", "PageHeight", "Orientation", "HeaderDistance", "FooterDistance"
-                            ):
-                                try:
-                                    orig_ps[attr] = getattr(ps1, attr)
-                                except Exception:
-                                    pass
-
-                        # 2. Convert ALL section breaks in doc to Continuous (0) so NextPage breaks can NEVER trigger page breaks
-                        for s_idx in range(1, doc.Sections.Count + 1):
-                            try:
-                                ps = doc.Sections(s_idx).PageSetup
-                                if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
-                                    ps.SectionStart = 0 # wdSectionContinuous
-                            except Exception:
-                                pass
-
-                        # 3. Delete trailing section break paragraph marks unconditionally
-                        while doc.Sections.Count > 1:
-                            sec_count = doc.Sections.Count
-                            deleted_any = False
-                            for s_idx in range(sec_count - 1, 0, -1):
-                                try:
-                                    sec = doc.Sections(s_idx)
-                                    sec_end = sec.Range.End
-                                    if sec_end > sec.Range.Start:
-                                        break_rng = doc.Range(Start=sec_end - 1, End=sec_end)
-                                        break_rng.Delete()
-                                        deleted_any = True
-                                except Exception:
-                                    pass
-                            if not deleted_any or doc.Sections.Count == sec_count:
+                        for _ in range(200):
+                            end = doc.Content.End
+                            if end <= doc.Content.Start + 1:
                                 break
 
-                        # 4. Delete trailing manual page breaks (\x0c, \f) at document tail
-                        for _ in range(5):
-                            if doc.Content.End <= 2:
-                                break
-                            tail_start = max(doc.Content.Start, doc.Content.End - 64)
-                            rng = doc.Range(Start=tail_start, End=doc.Content.End)
-                            txt = rng.Text
-                            idx = txt.find("\x0c")
-                            if idx < 0:
-                                idx = txt.find("\f")
-                            if idx >= 0:
-                                try:
-                                    doc.Range(Start=tail_start + idx, End=tail_start + idx + 1).Delete()
-                                except Exception:
-                                    break
-                            else:
-                                break
+                            # A. Trailing manual page break character.
+                            tail_start = max(doc.Content.Start, end - 128)
+                            tail = doc.Range(tail_start, end).Text
+                            brk = max(tail.rfind("\x0c"), tail.rfind("\f"))
+                            if brk >= 0 and not tail[brk + 1:].strip("\r\n\x0c\x07\x0b\f\x08 "):
+                                doc.Range(tail_start + brk, tail_start + brk + 1).Delete()
+                                continue
 
-                        # 5. Delete trailing empty paragraphs at document tail if they hold only whitespace
-                        for _ in range(5):
-                            if doc.Paragraphs.Count <= 1:
-                                break
+                            # B. Reached real content: nothing further to clean.
                             last_p = doc.Paragraphs(doc.Paragraphs.Count)
-                            p_rng = last_p.Range
-                            if (p_rng.InlineShapes.Count == 0 and
-                                p_rng.ShapeRange.Count == 0 and
-                                p_rng.Tables.Count == 0):
-                                p_txt = p_rng.Text
-                                if p_txt and not p_txt.strip("\r\n\t\x0c\f\x08"):
-                                    try:
-                                        p_rng.Delete()
-                                    except Exception:
-                                        break
-                                else:
-                                    break
-                            else:
+                            if PageExporterEngine._para_has_real_content(last_p):
                                 break
 
-                        # 6. Re-apply Section 1 layout attributes to ensure preceding content layout is 100% preserved
-                        if doc.Sections.Count > 0 and orig_ps:
-                            ps1 = doc.Sections(1).PageSetup
-                            for attr, val in orig_ps.items():
-                                try:
-                                    setattr(ps1, attr, val)
-                                except Exception:
-                                    pass
-
+                            # C. The last paragraph is empty/break-only. If it sits in a
+                            #    trailing empty section, merge that section away while
+                            #    preserving the layout of the section that holds content;
+                            #    otherwise just delete the empty paragraph.
+                            if doc.Sections.Count > 1:
+                                last_sec = doc.Sections(doc.Sections.Count)
+                                if PageExporterEngine._section_is_empty(last_sec):
+                                    PageExporterEngine._merge_trailing_empty_section(doc)
+                                    continue
+                            try:
+                                last_p.Range.Delete()
+                            except Exception:
+                                break
+                            continue
                     except Exception as sec_clean_err:
                         logger.warning(f"Trailing break cleanup warning: {sec_clean_err}")
                     break
             except Exception:
                 break
+
+    @staticmethod
+    def _para_has_real_content(para) -> bool:
+        """True when a paragraph carries content that must be preserved: non-whitespace
+        text, an inline image/shape, a field, an OMath, or a table cell. Empty
+        paragraphs and pure page-break paragraphs are cleanable."""
+        try:
+            if para.Range.Information(12):  # wdWithInTable
+                return True
+        except Exception:
+            pass
+        try:
+            rng = para.Range
+            txt = rng.Text or ""
+            if txt.strip("\r\n\t\x0c\x07\x0b\f\x08 "):
+                return True
+        except Exception:
+            return True
+        for coll in ("InlineShapes", "ShapeRange", "Fields", "OMaths"):
+            try:
+                if getattr(rng, coll).Count > 0:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    @staticmethod
+    def _section_is_empty(sec) -> bool:
+        """True when a section's body holds no real content (no text, inline images,
+        shapes, fields, or tables), so it is a leftover trailing section that can be
+        merged away without losing kept content."""
+        try:
+            rng = sec.Range
+        except Exception:
+            return False
+        try:
+            if rng.InlineShapes.Count or rng.ShapeRange.Count or rng.Fields.Count or rng.Tables.Count:
+                return False
+        except Exception:
+            pass
+        try:
+            for para in rng.Paragraphs:
+                if PageExporterEngine._para_has_real_content(para):
+                    return False
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _merge_trailing_empty_section(doc) -> None:
+        """Merge the (empty) last section into the section before it, preserving the
+        layout of the section that holds the last real content.
+
+        Word's section-break deletion gives the merged section the PageSetup of the
+        section AFTER the break, so the trailing section's PageSetup is overwritten
+        with its predecessor's layout first - this keeps the last kept page exactly
+        as it was in the source instead of inheriting the leftover section's format.
+        Only the boundary paragraph mark is deleted; any trailing empty content stays
+        and is handled by the caller on the next iteration.
+        """
+        n = doc.Sections.Count
+        if n <= 1:
+            return
+        try:
+            prev = doc.Sections(n - 1)
+            last = doc.Sections(n)
+        except Exception:
+            return
+        try:
+            ps_prev = prev.PageSetup
+            ps_last = last.PageSetup
+            for attr in (
+                "TopMargin", "BottomMargin", "LeftMargin", "RightMargin",
+                "HeaderDistance", "FooterDistance", "PageWidth", "PageHeight",
+                "Orientation", "Gutter", "SectionDirection",
+            ):
+                try:
+                    setattr(ps_last, attr, getattr(ps_prev, attr))
+                except Exception:
+                    pass
+            try:
+                ps_last.SectionStart = 0  # wdSectionContinuous
+            except Exception:
+                pass
+            prev_end = prev.Range.End
+            if prev_end - 1 >= doc.Content.Start:
+                doc.Range(prev_end - 1, prev_end).Delete()
+        except Exception as merge_err:
+            logger.warning(f"Trailing empty section merge warning: {merge_err}")
 
     @staticmethod
     def _restart_page_numbering(doc, start_page: int) -> None:
@@ -1806,7 +1869,16 @@ class PageExporterEngine:
             if only_last_section:
                 source_index = end_section_index
             else:
-                source_index = min(source_doc.Sections.Count, max(1, start_section_index + j - 1))
+                # Map target section j to the matching source section within the kept
+                # range. Never reach INTO a source section beyond end_section_index
+                # (the section that holds the last KEPT page): any extra target
+                # sections are empty trailing leftovers and must inherit the last kept
+                # section's layout, not the trimmed-away section's layout, so a later
+                # empty-section merge never resets the last page's margins/orientation.
+                _candidate = max(1, start_section_index + j - 1)
+                if _candidate > end_section_index:
+                    _candidate = end_section_index
+                source_index = min(source_doc.Sections.Count, _candidate)
 
             try:
                 target_sec = target_doc.Sections(j)

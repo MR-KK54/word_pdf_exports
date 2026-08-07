@@ -210,5 +210,160 @@ def test_libreoffice_availability_check():
     assert isinstance(is_available, bool)
 
 
+@pytest.fixture(scope="module")
+def doc_with_trailing_section_break(tmp_path_factory):
+    """Creates a document where the last KEPT page is in a landscape section whose
+    margin differs from the trimmed-away trailing section:
+
+        Section 1 (portrait, L=72): pages 1-2
+        Section 2 (landscape, L=36): page 3   <- last kept page
+        Section 3 (landscape, L=108): page 4  <- trimmed away
+
+    A bug used to make the exported last page inherit Section 3's layout (L=108)
+    after the trailing section break was removed, corrupting the last kept page.
+    """
+    tmp_dir = tmp_path_factory.mktemp("trailing_section_test")
+    doc_path = os.path.join(str(tmp_dir), "TrailingSectionDoc.docx")
+
+    with WordCOMContext(visible=False) as word:
+        doc = word.Documents.Add()
+        try:
+            sel = word.Selection
+            sel.TypeText("Page1 A\n")
+            sel.TypeText("Page1 B\n")
+            sel.EndKey(6)
+            sel.InsertBreak(7)  # page break
+            sel.TypeText("Page2 A\n")
+            sel.TypeText("Page2 B\n")
+            sel.EndKey(6)
+            sel.InsertBreak(2)  # section break next page -> Section 2
+            sec2 = doc.Sections(2)
+            sec2.PageSetup.Orientation = 1  # landscape
+            sec2.PageSetup.PageWidth = 792
+            sec2.PageSetup.PageHeight = 612
+            sec2.PageSetup.LeftMargin = 36
+            sel.TypeText("Page3 A (landscape)\n")
+            sel.TypeText("Page3 B (landscape)\n")
+            sel.EndKey(6)
+            sel.InsertBreak(2)  # section break next page -> Section 3
+            sec3 = doc.Sections(3)
+            sec3.PageSetup.Orientation = 1  # landscape
+            sec3.PageSetup.PageWidth = 792
+            sec3.PageSetup.PageHeight = 612
+            sec3.PageSetup.LeftMargin = 108  # deliberately different from Section 2
+            sel.TypeText("Page4 A (trailing)\n")
+            sel.TypeText("Page4 B (trailing)\n")
+            doc.SaveAs2(FileName=doc_path, FileFormat=16)
+        finally:
+            doc.Close(SaveChanges=False)
+    return doc_path
+
+
+def test_export_last_page_preserves_layout_with_trailing_section(doc_with_trailing_section_break, tmp_path):
+    """Exporting pages 1-3 must keep page 3's landscape layout (Section 2, margin 36)
+    after the trailing Section 3 break is removed, and must not leave a trailing page."""
+    out_file = os.path.join(str(tmp_path), "TrailingSection_1-3.docx")
+    res_path = PageExporterEngine.export_range(
+        source_file=doc_with_trailing_section_break,
+        output_file=out_file,
+        start_page=1,
+        end_page=3,
+        export_format="docx",
+        mode="trimming",
+        total_pages=4,
+    )
+    assert os.path.exists(res_path)
+
+    with WordCOMContext(visible=False) as word:
+        exported_doc = word.Documents.Open(FileName=res_path, ReadOnly=True)
+        try:
+            final_pages = exported_doc.ComputeStatistics(2)  # wdStatisticPages
+            assert final_pages == 3
+
+            # The last kept page's section must keep the SOURCE Section 2 layout
+            # (landscape, 36pt margin), not the trimmed-away Section 3's margin.
+            last_sec = exported_doc.Sections(exported_doc.Sections.Count)
+            assert last_sec.PageSetup.Orientation == 1  # wdOrientationLandscape
+            assert abs(last_sec.PageSetup.LeftMargin - 36.0) < 0.01
+
+            # No trailing empty/overflow page: the kept content must end cleanly.
+            assert "Page3 B (landscape)" in exported_doc.Content.Text
+            assert "Page4" not in exported_doc.Content.Text
+        finally:
+            exported_doc.Close(SaveChanges=False)
+
+
+def test_export_intermediate_range_preserves_layout(doc_with_trailing_section_break, tmp_path):
+    """Exporting pages 1-2 (which live in the portrait Section 1) must keep the
+    portrait layout instead of inheriting the following landscape section's."""
+    out_file = os.path.join(str(tmp_path), "TrailingSection_1-2.docx")
+    res_path = PageExporterEngine.export_range(
+        source_file=doc_with_trailing_section_break,
+        output_file=out_file,
+        start_page=1,
+        end_page=2,
+        export_format="docx",
+        mode="trimming",
+        total_pages=4,
+    )
+    assert os.path.exists(res_path)
+
+    with WordCOMContext(visible=False) as word:
+        exported_doc = word.Documents.Open(FileName=res_path, ReadOnly=True)
+        try:
+            final_pages = exported_doc.ComputeStatistics(2)
+            assert final_pages == 2
+            last_sec = exported_doc.Sections(exported_doc.Sections.Count)
+            # Kept page 2 lives in the portrait Section 1 (LeftMargin 72).
+            assert last_sec.PageSetup.Orientation == 0  # wdOrientationPortrait
+            assert abs(last_sec.PageSetup.LeftMargin - 72.0) < 0.01
+            assert "Page3" not in exported_doc.Content.Text
+        finally:
+            exported_doc.Close(SaveChanges=False)
+
+
+def test_export_removes_trailing_manual_page_break(tmp_path):
+    """A trailing manual page break at the end of the kept range must not create an
+    extra blank page; the last kept content must end the document."""
+    doc_path = os.path.join(str(tmp_path), "TrailingPageBreakDoc.docx")
+    with WordCOMContext(visible=False) as word:
+        doc = word.Documents.Add()
+        try:
+            sel = word.Selection
+            sel.TypeText("Page1 A\n")
+            sel.EndKey(6)
+            sel.InsertBreak(7)
+            sel.TypeText("Page2 A\n")
+            sel.EndKey(6)
+            sel.InsertBreak(7)  # page break that opens page 3 (trimmed away)
+            sel.TypeText("Page3 A (trimmed)\n")
+            doc.SaveAs2(FileName=doc_path, FileFormat=16)
+        finally:
+            doc.Close(SaveChanges=False)
+
+    out_file = os.path.join(str(tmp_path), "TrailingPageBreak_1-2.docx")
+    res_path = PageExporterEngine.export_range(
+        source_file=doc_path,
+        output_file=out_file,
+        start_page=1,
+        end_page=2,
+        export_format="docx",
+        mode="trimming",
+        total_pages=3,
+    )
+    assert os.path.exists(res_path)
+
+    with WordCOMContext(visible=False) as word:
+        exported_doc = word.Documents.Open(FileName=res_path, ReadOnly=True)
+        try:
+            final_pages = exported_doc.ComputeStatistics(2)
+            assert final_pages == 2
+            text = exported_doc.Content.Text
+            assert "Page2 A" in text
+            assert "Page3 A (trimmed)" not in text
+        finally:
+            exported_doc.Close(SaveChanges=False)
+
+
 
 
