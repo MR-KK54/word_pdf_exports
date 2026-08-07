@@ -1525,80 +1525,98 @@ class PageExporterEngine:
                     if doc.Content.End <= 2:
                         break
 
-                    # Remove trailing section break from the last page of the range spec:
-                    # Save Section 1 layout attributes, then delete the Section Break paragraph mark
-                    # so Section Break (Next Page) is completely removed from the document tail.
+                    # Unconditional Trailing Break Removal & Layout Locking:
+                    # 1. Save Section 1 PageSetup layout attributes (margins, width, height, orientation, distances)
                     try:
-                        if doc.Sections.Count > 1:
-                            for s_idx in range(doc.Sections.Count - 1, 0, -1):
+                        orig_ps = {}
+                        if doc.Sections.Count > 0:
+                            sec1 = doc.Sections(1)
+                            ps1 = sec1.PageSetup
+                            for attr in (
+                                "TopMargin", "BottomMargin", "LeftMargin", "RightMargin",
+                                "PageWidth", "PageHeight", "Orientation", "HeaderDistance", "FooterDistance"
+                            ):
                                 try:
-                                    sec = doc.Sections(s_idx)
-                                    ps = sec.PageSetup
-                                    orig_top = ps.TopMargin
-                                    orig_bot = ps.BottomMargin
-                                    orig_left = ps.LeftMargin
-                                    orig_right = ps.RightMargin
-                                    orig_w = ps.PageWidth
-                                    orig_h = ps.PageHeight
-                                    orig_orient = ps.Orientation
-                                    orig_hdr_dist = ps.HeaderDistance
-                                    orig_ftr_dist = ps.FooterDistance
-
-                                    # Try converting SectionStart to Continuous first
-                                    if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
-                                        ps.SectionStart = 0 # wdSectionContinuous
-
-                                    # Delete trailing section break character at section boundary if it sits near doc.Content.End
-                                    sec_end = sec.Range.End
-                                    if sec_end >= doc.Content.End - 10:
-                                        break_rng = doc.Range(Start=max(sec.Range.Start, sec_end - 1), End=sec_end)
-                                        break_rng.Delete()
-
-                                    # Re-apply preserved layout to guarantee preceding content layout is 100% unchanged
-                                    ps.TopMargin = orig_top
-                                    ps.BottomMargin = orig_bot
-                                    ps.LeftMargin = orig_left
-                                    ps.RightMargin = orig_right
-                                    ps.PageWidth = orig_w
-                                    ps.PageHeight = orig_h
-                                    ps.Orientation = orig_orient
-                                    ps.HeaderDistance = orig_hdr_dist
-                                    ps.FooterDistance = orig_ftr_dist
+                                    orig_ps[attr] = getattr(ps1, attr)
                                 except Exception:
                                     pass
-                        elif doc.Sections.Count == 1:
-                            sec = doc.Sections(1)
-                            ps = sec.PageSetup
-                            if ps.SectionStart in (2, 3, 4):
-                                ps.SectionStart = 0
-                    except Exception as sec_lock_err:
-                        logger.warning(f"Trailing section break removal warning: {sec_lock_err}")
 
-                    # Clean trailing empty paragraphs/breaks at doc.Content.End if they contain only whitespace
-                    try:
-                        if doc.Content.End > doc.Content.Start + 2:
-                            tail_rng = doc.Range(Start=max(doc.Content.Start, doc.Content.End - 12), End=doc.Content.End)
-                            if tail_rng.InlineShapes.Count == 0 and tail_rng.ShapeRange.Count == 0 and tail_rng.Tables.Count == 0:
-                                txt = tail_rng.Text
-                                if txt and not txt.strip("\r\n\t\x0c\f\x08"):
-                                    doc.Range(Start=doc.Content.End - len(txt), End=doc.Content.End - 1).Delete()
-                    except Exception:
-                        pass
+                        # 2. Convert ALL section breaks in doc to Continuous (0) so NextPage breaks can NEVER trigger page breaks
+                        for s_idx in range(1, doc.Sections.Count + 1):
+                            try:
+                                ps = doc.Sections(s_idx).PageSetup
+                                if ps.SectionStart in (2, 3, 4): # NextPage, EvenPage, OddPage
+                                    ps.SectionStart = 0 # wdSectionContinuous
+                            except Exception:
+                                pass
 
-                    # A manual page break (form-feed) left at the trimmed tail pushes
-                    # a spurious empty last page even though all real content was cut
-                    # away. Scan the trailing paragraphs (the final empty paragraph
-                    # plus the one before it) for such a break and delete it.
-                    tail_start = max(doc.Content.Start, doc.Content.End - 48)
-                    rng = doc.Range(Start=tail_start, End=doc.Content.End)
-                    idx = rng.Text.find("\x0c")
-                    if idx < 0:
-                        idx = rng.Text.find("\f")
-                    if idx < 0:
-                        break
-                    doc.Range(
-                        Start=tail_start + idx, End=tail_start + idx + 1
-                    ).Delete()
+                        # 3. Delete trailing section break paragraph marks unconditionally
+                        while doc.Sections.Count > 1:
+                            sec_count = doc.Sections.Count
+                            deleted_any = False
+                            for s_idx in range(sec_count - 1, 0, -1):
+                                try:
+                                    sec = doc.Sections(s_idx)
+                                    sec_end = sec.Range.End
+                                    if sec_end > sec.Range.Start:
+                                        break_rng = doc.Range(Start=sec_end - 1, End=sec_end)
+                                        break_rng.Delete()
+                                        deleted_any = True
+                                except Exception:
+                                    pass
+                            if not deleted_any or doc.Sections.Count == sec_count:
+                                break
+
+                        # 4. Delete trailing manual page breaks (\x0c, \f) at document tail
+                        for _ in range(5):
+                            if doc.Content.End <= 2:
+                                break
+                            tail_start = max(doc.Content.Start, doc.Content.End - 64)
+                            rng = doc.Range(Start=tail_start, End=doc.Content.End)
+                            txt = rng.Text
+                            idx = txt.find("\x0c")
+                            if idx < 0:
+                                idx = txt.find("\f")
+                            if idx >= 0:
+                                try:
+                                    doc.Range(Start=tail_start + idx, End=tail_start + idx + 1).Delete()
+                                except Exception:
+                                    break
+                            else:
+                                break
+
+                        # 5. Delete trailing empty paragraphs at document tail if they hold only whitespace
+                        for _ in range(5):
+                            if doc.Paragraphs.Count <= 1:
+                                break
+                            last_p = doc.Paragraphs(doc.Paragraphs.Count)
+                            p_rng = last_p.Range
+                            if (p_rng.InlineShapes.Count == 0 and
+                                p_rng.ShapeRange.Count == 0 and
+                                p_rng.Tables.Count == 0):
+                                p_txt = p_rng.Text
+                                if p_txt and not p_txt.strip("\r\n\t\x0c\f\x08"):
+                                    try:
+                                        p_rng.Delete()
+                                    except Exception:
+                                        break
+                                else:
+                                    break
+                            else:
+                                break
+
+                        # 6. Re-apply Section 1 layout attributes to ensure preceding content layout is 100% preserved
+                        if doc.Sections.Count > 0 and orig_ps:
+                            ps1 = doc.Sections(1).PageSetup
+                            for attr, val in orig_ps.items():
+                                try:
+                                    setattr(ps1, attr, val)
+                                except Exception:
+                                    pass
+
+                    except Exception as sec_clean_err:
+                        logger.warning(f"Trailing break cleanup warning: {sec_clean_err}")
+                    break
             except Exception:
                 break
 
