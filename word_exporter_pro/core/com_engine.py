@@ -382,7 +382,7 @@ class PageExporterEngine:
                         abs_source, abs_output, start_page, end_page, export_format
                     )
                 except Exception as err:
-                    logger.warning(f"Aspose.Words server export failed ({err}); trying LibreOffice engine.")
+                    logger.warning(f"Aspose.Words server export failed ({err}); trying LibreOffice layout engine.")
 
             if _is_libreoffice_available():
                 try:
@@ -390,7 +390,7 @@ class PageExporterEngine:
                         abs_source, abs_output, start_page, end_page, export_format
                     )
                 except Exception as err:
-                    logger.warning(f"LibreOffice server export failed ({err}); using fast docx fallback.")
+                    logger.warning(f"LibreOffice server export failed ({err}).")
 
             t_pages = total_pages
             if t_pages <= 1:
