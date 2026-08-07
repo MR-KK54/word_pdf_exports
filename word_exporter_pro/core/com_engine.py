@@ -1707,8 +1707,17 @@ class PageExporterEngine:
     ) -> None:
         """Restores exact formatted headers/footers and page setup from source_doc onto target_doc."""
         range_section_count = end_section_index - start_section_index + 1
-        exported_count = target_doc.Sections.Count
+        
+        # Ensure target_doc maintains the exact number of sections as the source range
+        try:
+            while target_doc.Sections.Count < range_section_count:
+                last_rng = target_doc.Content
+                last_rng.Collapse(0) # wdCollapseEnd
+                last_rng.InsertBreak(7) # wdSectionBreakNextPage
+        except Exception as sec_add_err:
+            logger.warning(f"Section break re-creation warning: {sec_add_err}")
 
+        exported_count = target_doc.Sections.Count
         PageExporterEngine._copy_document_styles(target_doc, source_doc)
 
         if only_last_section:
